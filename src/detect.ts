@@ -47,7 +47,11 @@ export type RunDetection = { findings: Finding[]; checks: Check[]; jobs: FleetJo
 /** What the detectors say about the jobs of one run. `checks` says, per detector, whether it had anything to look at. */
 export function detectRun(ctx: DetectContext, repo: string, runId: string): RunDetection {
   const { index } = ctx;
-  const jobs = index.sorted().filter((j) => j.repo === repo && j.runId === runId);
+  // A run that was run again holds two jobs with one name: the newest one stands for the run.
+  const all = index.sorted().filter((j) => j.repo === repo && j.runId === runId);
+  const newest = new Map<string, FleetJob>();
+  for (const j of all) if (!newest.has(j.name) || newest.get(j.name)!.startedAt < j.startedAt) newest.set(j.name, j);
+  const jobs = all.filter((j) => newest.get(j.name) === j);
   const traced = jobs.filter((j) => j.hasTrace);
   const ids = new Set(jobs.map((j) => j.jobId));
   const findings: Finding[] = [];

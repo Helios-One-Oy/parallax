@@ -368,7 +368,7 @@ function mergeRows(v: Verdict | null, t: TwinDetail | null): TwinRow[] {
   return rows;
 }
 
-function gateOf(run: RunRow, v: Verdict | null, jobs: GhJobLite[], fromGithub: boolean): Gate {
+function gateOf(run: RunRow, v: Verdict | null, jobs: GhJobLite[], fromGithub: boolean, stoppedBy: string[] = []): Gate {
   const job = jobs.find((j) => RELEASE_JOB.test(j.name)) ?? null;
   if (!fromGithub) return { job: null, state: "unknown", sentence: "GitHub has not been read for this run yet." };
   if (!job) {
@@ -380,11 +380,24 @@ function gateOf(run: RunRow, v: Verdict | null, jobs: GhJobLite[], fromGithub: b
     return { job, state: "waiting", sentence: "The release job has not started. It waits for the verdict." };
   }
   if (job.conclusion === "skipped" || job.conclusion === "cancelled" || !job.startedAt) {
-    const because = v?.status === "divergent" ? "The twins diverged, so the release job did not start." : v?.status === "inconclusive" ? "The verdict is inconclusive, so the release job did not start." : "The release job did not start in this run.";
+    const because =
+      v?.status === "divergent"
+        ? "The twins diverged, so the release job did not start."
+        : stoppedBy.length
+          ? `The verdict job stopped the run (${stoppedBy.join(", ")}), so the release job did not start.`
+          : v?.status === "inconclusive"
+            ? "The verdict is inconclusive, so the release job did not start."
+            : "The release job did not start in this run.";
     return { job, state: "not_started", sentence: because };
   }
   const ended = job.conclusion && job.conclusion !== "success" ? ` It ended in ${job.conclusion}.` : "";
-  const ran = v?.status === "clean" ? "The verdict was clean, so the release job ran." : v?.status === "divergent" ? "The twins diverged, and the release job ran anyway." : "The release job ran.";
+  const ran = stoppedBy.length && v?.status !== "divergent"
+    ? "The release job ran: this run's own verdict job had passed. What is listed below was found afterwards, from CRACI's records."
+    : v?.status === "clean"
+      ? "The verdict was clean, so the release job ran."
+      : v?.status === "divergent"
+        ? "The twins diverged, and the release job ran anyway."
+        : "The release job ran.";
   return { job, state: "ran", sentence: ran + ended };
 }
 
@@ -407,6 +420,8 @@ function ownDownloads(s: Snapshot, v: Verdict): Seed[] {
     const j = index.getJob(v.repo, id);
     if (!j || !UNTRUSTED_EVENTS.includes(j.event)) continue;
     for (const [url, sha] of j.urlHashes) {
+      // A URL that names a commit (an action's source at a new version) is new bytes by design, not a package.
+      if (/\/[0-9a-f]{40}(\/|$)/.test(url)) continue;
       if (merged.has(`${url}@${sha}`) || MUTABLE_URL_RULES.some((r) => r.match.test(url)) || out.some((x) => x.seed === `sha256:${sha}`)) continue;
       out.push({ seed: `sha256:${sha}`, label: `bytes of ${url}`, kind: "bytes" });
     }
@@ -473,7 +488,7 @@ export function runView(s: Snapshot, repo: string, runId: string): RunView | nul
     findings: detection.findings,
     checks: [...(verdict?.checks ?? []).filter((c) => c.organ === "twins"), ...detection.checks],
     jobs,
-    gate: gateOf(run, verdict, jobs, fromGithub),
+    gate: gateOf(run, verdict, jobs, fromGithub, [...new Set(detection.findings.filter((f) => f.fails).map((f) => f.organ))]),
     seeds: verdict ? seedsOf(s, verdict) : [],
   };
 }

@@ -55,6 +55,15 @@ describe("new egress", () => {
     expect(judge("clean", d.findings)).toEqual({ result: "fail", caughtBy: ["new egress"] });
   });
 
+  test("a run that was run again is judged by its newest jobs, once", async () => {
+    const index = await fleet([
+      ...history(),
+      { id: 91, run: 9, name: "build (bare)", event: "pull_request", minute: 60, obs: [...npmBuild(), beacon] },
+      { id: 93, run: 9, name: "build (bare)", event: "pull_request", minute: 70, obs: [...npmBuild(), beacon] }, // the re-run
+    ]);
+    expect(detectRun(detectContext(index), REPO, "9").findings.map((f) => [f.jobId, f.key])).toEqual([["93", "fresh-host.test"]]);
+  });
+
   test("too little history: nothing is called new, and the check says so", async () => {
     const index = await fleet([...history().slice(0, 4), { id: 91, run: 9, minute: 60, obs: [...npmBuild(), beacon] }]);
     const d = detectRun(detectContext(index), REPO, "9");

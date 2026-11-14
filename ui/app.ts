@@ -257,8 +257,15 @@ function verdictHtml(v: RunPayload): string {
         : "Parallax could not compare the twins.";
   const other = [...new Set(v.findings.filter((f) => f.fails).map((f) => f.organ))];
   const stop = other.length ? `<p class="stop">${x.status === "divergent" ? "Also caught by" : "Caught by"}: ${esc(other.join(", "))}. See below.</p>` : "";
+  // The request itself belongs in the banner: in the table below it can sit a hundred lines down.
+  const lone = v.rows.filter((r) => r.state === "divergent");
+  const only =
+    lone
+      .slice(0, 4)
+      .map((r) => `<p class="only">${r.decoy && !r.bare ? "Only the decoy twin: " : r.bare && !r.decoy ? "Only the bare twin: " : ""}<span class="mono">${esc(r.key)}</span></p>`)
+      .join("") + (lone.length > 4 ? `<p class="only">and ${lone.length - 4} more, in red below.</p>` : "");
   const sub = `${x.stats.shared} seen in both, bare ${x.stats.bare}, decoy ${x.stats.decoy}. ${x.ignored.count} ignored as noise${x.ignored.rules.length ? ` (${x.ignored.rules.join(", ")})` : ""}. Judged ${ago(x.createdAt)}.`;
-  return `<div class="verdict ${x.status}"><span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span><div><p>${esc(head)}</p>${stop}<p class="sub">${esc(sub)}</p></div></div>`;
+  return `<div class="verdict ${x.status}"><span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span><div><p>${esc(head)}</p>${only}${stop}<p class="sub">${esc(sub)}</p></div></div>`;
 }
 
 const CHECK_WORDS: Record<string, string> = { checked: "checked", too_little_history: "not judged", nothing_to_check: "nothing to check" };

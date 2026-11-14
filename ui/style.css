@@ -144,6 +144,7 @@ a.run:hover { background: var(--panel); }
 .verdict { margin-top: 22px; display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border: 1px solid var(--line-2); border-radius: 10px; max-width: 880px; }
 .verdict.divergent { border-color: var(--alarm); background: var(--alarm-wash); }
 .verdict p { font-size: 1.0625rem; font-weight: 500; }
+.verdict .only { font-weight: 400; font-size: 0.9375rem; margin-top: 6px; overflow-wrap: anywhere; }
 .verdict .sub { font-weight: 400; color: var(--ink-2); font-size: 0.9375rem; margin-top: 2px; }
 .pipe { margin-top: 22px; display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
 .pipe .job { border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px; min-width: 132px; text-decoration: none; }

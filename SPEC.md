@@ -36,6 +36,8 @@ CRACI API (`https://api.craci.com`, `Authorization: Bearer $CRACI_API_TOKEN`; to
 - `GET /v1preview1/network-trace?provider=github&repo=O/R&job_id=N` → `NetworkTrace` (`observations[]`, each `protocol: http|dns|tcp|ssh_git`)
 - `GET /v1preview1/sbom?provider=github&repo=O/R&job_id=N` → CycloneDX
 - `GET /v1preview1/artifact-provenance/gha_cache|oci_blob|oci_manifest`, `GET /v1experimental1/sbom/oci_manifest`
+- The API answers 403 "Access denied" to calls made from inside a CRACI runner (every network mode, tested 14 Nov). The verdict job therefore runs on `ubuntu-latest`; only it.
+- The token is per CRACI organization: ours is "Helios One" (GitHub org `Helios-One-Oy`). `~/.config/crashtest/craci.token` is that token.
 - Finished jobs are not listed by CRACI: enumerate runs and jobs through the GitHub API (`gh api repos/O/R/actions/runs`, `.../runs/ID/jobs`).
 
 Twin job names: `build (bare)` and `build (decoy)` (a matrix `twin: [bare, decoy]` on one job id `build`).

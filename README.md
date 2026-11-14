@@ -30,7 +30,7 @@ Harmless copies of real attacks, run in our demo repos. Every row on the Replays
 | Workflow deleted from GitHub after it ran | kept by CRACI | no detector: CRACI still holds its 14 connections and its log | |
 | Dormant payload (waits for a date) | missed | | |
 
-Five of the seven caught were stopped in their own run, before the release job. Of the first 55 twin builds 50 came out clean, 4 were the two hiding packages (each pushed twice) and 1 was a false alarm, which is now a rule: what a twin does before it is dressed is ignored.
+Five of the seven were stopped before their release job started. The other two were seen but not stopped. Of the first 55 twin builds 50 came out clean, 4 were the two hiding packages (each pushed twice) and 1 was a false alarm, which is now a rule: what a twin does before it is dressed is ignored.
 
 ## Add it to a repo
 

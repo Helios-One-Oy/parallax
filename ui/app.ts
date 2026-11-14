@@ -687,7 +687,7 @@ function replaysHtml(s: State): string {
   const rest = s.replays.length - ran;
   const inTime = s.replays.filter((r) => r.state === "caught" && r.stopped).length;
   const sum = ran
-    ? `${caught} caught, ${missed} missed${kept ? `, ${kept} kept by CRACI after its run was deleted on GitHub` : ""}${rest ? `, ${rest} not run or not seen yet` : ""}.${inTime && inTime < caught ? ` ${inTime} of the ${caught} were stopped in their own run, before the release job.` : ""}`
+    ? `${caught} caught, ${missed} missed${kept ? `, ${kept} kept by CRACI after its run was deleted on GitHub` : ""}${rest ? `, ${rest} not run or not seen yet` : ""}.${inTime && inTime < caught ? ` ${inTime} of the ${caught} were stopped before their release job started. The other ${caught - inTime} ${caught - inTime === 1 ? "was" : "were"} seen but not stopped.` : ""}`
     : "None has run yet.";
   return `<h1 class="plain">Real attacks, replayed on the fleet</h1>
     <p class="lead">Each replay is a harmless simulation of one real attack, run in a fleet repo. The row fills in from the real run: what Parallax saw, which detector caught it, how long it took from the push. A miss is shown as a miss. ${esc(sum)}</p>

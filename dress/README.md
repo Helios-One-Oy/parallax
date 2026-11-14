@@ -23,7 +23,7 @@ exactly as on a clean project.
 ## Usage
 
 ```yaml
-- uses: ToukoUrsin/parallax/dress@main
+- uses: Helios-One-Oy/parallax/dress@main
   with:
     twin: ${{ matrix.twin }}   # bare | decoy
 - run: plx-run npm ci

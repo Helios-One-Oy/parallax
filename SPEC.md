@@ -19,7 +19,7 @@ When something is caught, CRACI's cache and image provenance tell us where it al
 | Console | `src/server.ts`, `ui/` | Live fleet view, twin view, rings, replay scoreboard. |
 | Specimens | `specimens/` | Harmless simulated malicious packages (see safety rules). |
 | Sink | `sink/` | Our own endpoint the specimens call, plus a static registry that serves the specimen tarballs. Deployed on Fly as `parallax-sink`. |
-| Fleet | `../fleet/web`, `../fleet/api`, `../fleet/base` | Demo repos (`ToukoUrsin/parallax-demo-web|api|base`) whose CI runs on `runs-on: craci`. Attack replays are pull requests in them. |
+| Fleet | `../fleet/web`, `../fleet/api`, `../fleet/base` | Demo repos (`Helios-One-Oy/parallax-demo-web|api|base`) whose CI runs on `runs-on: craci`. Attack replays are pull requests in them. |
 
 ## Safety rules for specimens (not negotiable)
 

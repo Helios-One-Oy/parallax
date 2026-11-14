@@ -202,3 +202,16 @@ export const MIN_EGRESS_RUNS = 3;
 
 // "Same URL, new bytes" fails the verdict only when the old bytes were seen by at least this many earlier jobs.
 export const MIN_STABLE_JOBS = 2;
+
+/**
+ * Verdicts that were wrong when they were made, by run. They stay as they were judged; the console labels them.
+ * The one so far: the runner's own "does GitHub resolve" check ran in one twin only, before the build began.
+ * It became RUNNER_CHECK and the rule that what happens before the dressing is ignored.
+ */
+export const KNOWN_FALSE_ALARMS: Record<string, string> = {
+  "Helios-One-Oy/parallax-demo-web#43616696415":
+    "A false alarm. The runner itself checked that GitHub resolves in one twin only, before the build began. Since then, what happens before the twins are dressed is ignored.",
+};
+
+/** The SHA-256 of an empty body. Every empty answer has it, so it says nothing about where bytes went. */
+export const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";

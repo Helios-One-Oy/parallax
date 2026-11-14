@@ -18,20 +18,20 @@ CRACI records every connection and every package of both. We compare the two tra
 
 We tried it on two harmless packages of our own that hide this way. One fires only when it finds an npm token, which is what the Shai-Hulud worm needed to spread. The other fires only on a release tag. Both were stopped, 53 and 51 seconds after the push.
 
-Honest builds differ a little too. A URL that comes and goes in the repo's own history is ignored. Of the first 43 twin builds 38 came out clean and 4 were the two hiding packages, each pushed twice. One was a false alarm: the runner itself called GitHub in only one twin before the build began, and that is why what happens before the dressing is ignored. The second twin doubles the build. In our demo repos that is 13 to 36 seconds of runner time per push.
+Honest builds differ a little too. A URL that comes and goes in the repo's own history is ignored. Of the first 55 twin builds 50 came out clean and 4 were the two hiding packages, each pushed twice. One was a false alarm: the runner itself called GitHub in only one twin before the build began, and that is why what happens before the dressing is ignored. It is still on the Fleet page, marked as one. The second twin doubles the build. In our demo repos that is 13 to 36 seconds of runner time per push.
 
-Most attacks don't bother to hide, and for those we use what else CRACI knows about a build. We replayed seven as harmless copies in our demo repos and caught six. The one that got past us is a time bomb, a package that does nothing until a set date.
+Most attacks don't bother to hide, and for those we use what else CRACI knows about a build. We replayed seven as harmless copies in our demo repos and caught six, three of them in time to stop their own release. The one that got past us is a time bomb, a package that does nothing until a set date.
 
 - axios: both twins called a host that none of the repo's 11 earlier runs had called.
-- TanStack: the release restored a cache that a pull request job wrote. CRACI's cache provenance names the writer.
+- TanStack: the build on main restored a cache that a pull request job had written. CRACI's cache provenance names the writer.
 - tj-actions: the same URL answered with different content than last time. CRACI's trace carries a hash of the response.
 - KICS: the tag of our own base image moved to a digest that none of our jobs built. CRACI's image provenance has no record of it.
 - A package name that does not exist, the kind coding assistants invent: the install asked the registry for it. Whoever registers it next decides what that build installs.
-- A workflow that posts to a raw IP address and is then deleted from GitHub: CRACI still holds its 14 connections.
+- A workflow that posts to a raw IP address and is then deleted from GitHub: CRACI still holds its 14 connections and its log, with the address in it.
 
 For each catch you can ask where else it went: every other job that used the same package, host, cache or content.
 
-The same distrust goes for fixes. CRACI writes a fix prompt for a build's vulnerabilities (AI fixes). We copy it from the job page and the rest runs by itself. An agent writes the change, and then nobody believes the agent, because a bot that bumps dependencies is a fast way to install a hijacked release. Its pull request goes through the twins like any other, and the SBOM of that build decides what is really fixed. On the first real run the known vulnerabilities went from 32 to 12.
+The same distrust goes for fixes. CRACI writes a fix prompt for a build's vulnerabilities (AI fixes). It asks for an audit and leaves the change to you. We copy it from the job page and tell an agent to do the audit and make the change too. Then nobody believes the agent, because a bot that bumps dependencies is a fast way to install a hijacked release. Its pull request goes through the twins like any other, and the SBOM of that build decides what is really fixed. On the first real run the known vulnerabilities went from 32 to 12.
 
 The demo needs no login. Open the Replays page first: every row links to the real run.
 

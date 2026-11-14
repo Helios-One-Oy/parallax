@@ -308,3 +308,8 @@ ol.solo > li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 
 .fix-prompt { margin-top: 16px; font-size: 0.875rem; }
 .fix-prompt summary { cursor: pointer; color: var(--ink-2); }
 .fix-prompt pre { margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8125rem; line-height: 1.5; max-height: 420px; overflow: auto; }
+
+/* the twins table, folded: what only one twin did first, the rest behind a summary */
+.twins ol.lone { border-bottom: 1px solid var(--line-2); }
+.allconn > summary { padding: 10px 14px; cursor: pointer; color: var(--ink-2); font-size: 0.875rem; }
+.allconn[open] > summary { border-bottom: 1px solid var(--line); }

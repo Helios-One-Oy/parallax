@@ -391,9 +391,25 @@ export function rings(g: Graph, seed: string): Rings {
     for (const e of g.in(hid, "contacted")) put(e.from, 0, [hid, e.from], `Contacted ${seed} (CRACI network trace).`);
   }
 
+  // A layer that was pulled from a place none of our jobs push to (the public base image under our own) is
+  // not our jobs' work, whoever pushed it on. Neither is a layer the same job pulled before it pushed it.
+  const ours = new Set<string>();
+  for (const e of g.edges) {
+    if (e.type !== "created") continue;
+    const up = /blob upload to (\S+)/.exec(e.evidence)?.[1] ?? /trace: PUT (\S+):[^:\s]+$/.exec(e.evidence)?.[1];
+    if (up) ours.add(up);
+  }
+  const from = (evidence: string) => /GET (\S+?)\/v2\/(\S+)\/blobs\//.exec(evidence)?.slice(1, 3).join("/") ?? "";
+  const inherited = (jobId: string, blobId: string): boolean => {
+    if (!blobId.startsWith("blob:")) return false;
+    const pulls = g.in(blobId, "pulled");
+    return pulls.some((p) => p.from === jobId || (ours.size > 0 && from(p.evidence) !== "" && !ours.has(from(p.evidence))));
+  };
+
   const spread = (fromRing: 0 | 2, toRing: 1 | 3) => {
     for (const m of [...member.values()].filter((x) => x.ring === fromRing && x.type === "job")) {
       for (const e of g.out(m.id, "created")) {
+        if (inherited(m.id, e.to)) continue;
         if (!put(e.to, toRing, [...m.path, e.to], `Written by ${label(m.id)} (${e.evidence}).`)) continue;
         // An image that lists a tainted layer or manifest is tainted too.
         const stack = [e.to];

@@ -2,7 +2,7 @@
 import { detectContext, detectRun, judge, type DetectContext, type RunDetection } from "../detect.ts";
 import { FleetIndex, type FleetJob } from "../fleet.ts";
 import { buildGraph, cacheLineageAlerts, cacheNodeId, foreignImagePulls, ringFence, rings, type FenceResult, type Graph, type RingMember } from "../graph.ts";
-import { MIN_EGRESS_RUNS, MUTABLE_URL_RULES, SOURCE_HOSTS, TWIN_JOB_PATTERNS, UNTRUSTED_EVENTS } from "../rules.ts";
+import { EMPTY_SHA256, KNOWN_FALSE_ALARMS, MIN_EGRESS_RUNS, MUTABLE_URL_RULES, SOURCE_HOSTS, TWIN_JOB_PATTERNS, UNTRUSTED_EVENTS } from "../rules.ts";
 import type { Check, Divergence, Finding, JobSummary, Organ, Verdict } from "../types.ts";
 import { runKey, type GhJobLite, type Snapshot, type TwinConn, type TwinDetail } from "./snapshot.ts";
 
@@ -72,6 +72,8 @@ export type RunRow = {
   pr: { number: number; url: string } | null;
   /** GitHub no longer has this run (it was deleted there). */
   gone: boolean;
+  /** Set when this run's divergent verdict is a known false alarm: why. */
+  falseAlarm: string | null;
 };
 
 const runsCache = new WeakMap<Snapshot, Map<string, RunRow>>();
@@ -88,6 +90,7 @@ export function runsOf(s: Snapshot): Map<string, RunRow> {
         repo, runId, branch: "", sha: "", event: "", workflow: "", title: "", startedAt: "",
         url: `https://github.com/${repo}/actions/runs/${runId}`,
         status: null, conclusion: null, live: false, hasTwins: false, verdict: null, divergences: 0, result: null, caughtBy: [], findings: 0, pr: null, gone: false,
+        falseAlarm: KNOWN_FALSE_ALARMS[k] ?? null,
       };
       out.set(k, r);
     }
@@ -174,12 +177,14 @@ export type FleetView = {
   generatedAt: string | null;
   fixture: boolean;
   repos: Array<{ repo: string; url: string; runs: RunRow[]; totalRuns: number; error: string | null }>;
-  /** Runs a detector failed, the twin diff first, one per branch and cause. */
+  /** Runs whose own verdict job failed, so nothing after it started: the twin diff first, one per branch and cause. */
   stopped: RunRow[];
   active: ActiveRow[];
   activeAt: string | null;
   alerts: Alerts;
   counts: { jobs: number; traced: number; caches: number; images: number; verdicts: number };
+  /** Runs the twins judged: how they came out. */
+  twins: { runs: number; clean: number; caught: number; inconclusive: number; falseAlarms: Array<{ repo: string; runId: string }> };
 };
 
 const alertsCache = new WeakMap<Snapshot, Alerts>();
@@ -251,11 +256,14 @@ export function activeOf(s: Snapshot, live?: JobSummary[] | null): ActiveRow[] {
 export function fleetView(s: Snapshot, o: { runsPerRepo?: number; live?: JobSummary[] | null; liveAt?: string | null } = {}): FleetView {
   const all = [...runsOf(s).values()];
   const stopped = new Map<string, RunRow>();
-  for (const r of all.filter((x) => x.result === "fail").sort(newestFirst)) {
+  // What a detector found only afterwards, or in a run without a verdict job, stopped nothing and is not listed here.
+  const verdictFailed = (r: RunRow) => (s.github.repos[r.repo]?.jobs[r.runId] ?? []).some((j) => /^verdict\b/i.test(j.name) && j.status === "completed" && j.conclusion === "failure");
+  for (const r of all.filter((x) => x.result === "fail" && verdictFailed(x)).sort(newestFirst)) {
     const k = [r.repo, r.branch, r.verdict === "divergent", r.caughtBy.join()].join("\n");
     if (!stopped.has(k)) stopped.set(k, r);
   }
-  const twinsFirst = (a: RunRow, b: RunRow) => Number(b.verdict === "divergent") - Number(a.verdict === "divergent") || newestFirst(a, b);
+  const rank = (r: RunRow) => (r.falseAlarm ? 2 : r.verdict === "divergent" ? 0 : 1);
+  const twinsFirst = (a: RunRow, b: RunRow) => rank(a) - rank(b) || newestFirst(a, b);
   return {
     generatedAt: s.generatedAt || null,
     fixture: s.fixture,
@@ -273,6 +281,13 @@ export function fleetView(s: Snapshot, o: { runsPerRepo?: number; live?: JobSumm
     active: activeOf(s, o.live),
     activeAt: o.live ? (o.liveAt ?? null) : s.activeAt,
     alerts: alertsOf(s),
+    twins: {
+      runs: all.filter((r) => r.verdict).length,
+      clean: all.filter((r) => r.verdict === "clean").length,
+      caught: all.filter((r) => r.verdict === "divergent" && !r.falseAlarm).length,
+      inconclusive: all.filter((r) => r.verdict === "inconclusive").length,
+      falseAlarms: all.filter((r) => r.verdict === "divergent" && r.falseAlarm).map((r) => ({ repo: r.repo, runId: r.runId })),
+    },
     counts: {
       jobs: s.jobs.length,
       traced: s.jobs.filter((j) => j.hasTrace).length,
@@ -355,7 +370,7 @@ function mergeRows(v: Verdict | null, t: TwinDetail | null): TwinRow[] {
       : v.status === "inconclusive"
         ? "Not judged: the verdict is inconclusive."
         : side === "decoy"
-          ? "Not counted: earlier bare runs of this repo did this too."
+          ? "Not counted: bare twins of earlier runs in this repo made this call too, so the fake keys did not cause it."
           : "Not counted: it comes and goes between earlier bare runs, or the decoy twin stopped early.";
   const make = (c: TwinConn, side: "bare" | "decoy" | "both"): TwinRow => {
     if (side === "both") return { key: c.key, kind: c.kind, host: c.host, bare: c, decoy: decoyBy.get(c.key)!, state: "shared", why: null, novel: false, note: null };
@@ -456,12 +471,13 @@ export function seedsOf(s: Snapshot, only?: Verdict | null): Seed[] {
     if (!out.has(x.seed)) out.set(x.seed, x);
   };
   for (const v of only ? [only] : s.verdicts) {
+    if (!only && KNOWN_FALSE_ALARMS[runKey(v.repo, v.runId)]) continue;
     if (v.status === "divergent" || detectionOf(s, v.repo, v.runId).findings.some((f) => f.fails)) for (const x of ownDownloads(s, v)) add(x);
     for (const d of v.divergences) {
       if (d.kind === "package") add({ seed: d.key, label: d.key, kind: "package" });
       else {
         const sha = (d.sample as any)?.http?.bodyHash?.sha256;
-        if (typeof sha === "string" && /^[0-9a-f]{64}$/i.test(sha)) add({ seed: `sha256:${sha.toLowerCase()}`, label: `bytes of ${d.key.split(" ").slice(2).join(" ") || d.host}`, kind: "bytes" });
+        if (typeof sha === "string" && /^[0-9a-f]{64}$/i.test(sha) && sha.toLowerCase() !== EMPTY_SHA256) add({ seed: `sha256:${sha.toLowerCase()}`, label: `bytes of ${d.key.split(" ").slice(2).join(" ") || d.host}`, kind: "bytes" });
         if (d.host) add({ seed: d.host, label: d.host, kind: "host" });
       }
     }
@@ -563,7 +579,10 @@ function resolveSeed(s: Snapshot, seed: string): { seed: string; resolved: strin
 export async function ringsView(s: Snapshot, rawSeed: string): Promise<RingsView> {
   const { index, graph } = coreOf(s);
   const seed = rawSeed.trim();
-  const res = resolveSeed(s, seed);
+  const empty = seed.toLowerCase() === `sha256:${EMPTY_SHA256}`;
+  const res = empty
+    ? { seed: "none.invalid", resolved: null, note: "That is the hash of an empty answer. Every empty answer has it, so it cannot say where anything went." }
+    : resolveSeed(s, seed);
   const r = rings(graph, res.seed);
   const fence = await ringFence(r, { dryRun: true, active: s.active, policies: s.policies });
   const withRun = (m: RingMember) => {

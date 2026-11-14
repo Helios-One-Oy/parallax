@@ -53,6 +53,7 @@ const VERDICT_WORDS: Record<string, string> = { clean: "clean", divergent: "dive
 /** The twin verdict of a run, then one label per other detector that found something in it. */
 function runChip(r: RunRow): string {
   const others = (r.caughtBy ?? []).filter((o) => o !== "twins").map((o) => `<span class="chip organ">${esc(o)}</span>`).join("");
+  if (r.falseAlarm) return `<span class="chip inconclusive">false alarm</span>`;
   // "clean" beside a detector's name reads as a contradiction: the twins agreed, something else caught the run.
   if (r.verdict === "clean" && others) return `${others}<span class="chip none">twins agree</span>`;
   if (r.verdict) return `<span class="chip ${r.verdict}">${VERDICT_WORDS[r.verdict]}</span>${others}`;
@@ -197,8 +198,14 @@ function fleetHtml(s: State): string {
     ${
       f.stopped?.length
         ? `<section aria-labelledby="h-stopped">
-      <h2 id="h-stopped">Caught <span class="n">${f.stopped.length}</span></h2>
-      <p class="hint">Runs a detector failed, the twins first. Open one to see what gave it away.</p>
+      <h2 id="h-stopped">Stopped <span class="n">${f.stopped.length}</span></h2>
+      <p class="hint">Runs whose verdict job failed, so the release never started. The twins first. Open one to see what gave it away.${
+        f.twins?.runs
+          ? ` The twins have judged ${plural(f.twins.runs, "build")}: ${f.twins.clean} clean, ${f.twins.caught} caught${f.twins.inconclusive ? `, ${f.twins.inconclusive} inconclusive` : ""}${
+              f.twins.falseAlarms.length ? `, ${f.twins.falseAlarms.map((x) => `<a href="${esc(runHref(x.repo, x.runId))}">${f.twins.falseAlarms.length} false alarm${f.twins.falseAlarms.length === 1 ? "" : "s"}</a>`)[0]}` : ""
+            }.`
+          : ""
+      }</p>
       <ul class="rows">${f.stopped.map((r) => runRow(r, true)).join("")}</ul>
     </section>`
         : ""
@@ -224,7 +231,7 @@ function fleetHtml(s: State): string {
     <section aria-labelledby="h-alerts">
       <h2 id="h-alerts">What the whole fleet shows</h2>
       <div class="alerts">
-        ${alertBlock("New egress", "A job contacted a host that no earlier job of its repo had. Judged once a repo has three earlier runs.", egress, a.jobs)}
+        ${alertBlock("New egress", "A job contacted a host that no earlier job of its repo had. Judged once a repo has three earlier runs. A new registry mirror shows up here just like an attacker's host: the list is for a person to read.", egress, a.jobs)}
         ${alertBlock("Cache lineage", "A trusted job restored a cache that a job anyone can trigger wrote.", lineage, a.jobs)}
         ${alertBlock("Same URL, new bytes", "A URL that should not change returned different content than before.", drift, a.jobs)}
         ${alertBlock("Image provenance", "A job pulled one of our own images and got bytes none of our jobs produced.", images, a.jobs)}
@@ -292,6 +299,13 @@ function verdictHtml(v: RunPayload): string {
         : "Parallax could not compare the twins.";
   const other = [...new Set(v.findings.filter((f) => f.fails).map((f) => f.organ))];
   const stop = other.length ? `<p class="stop">${x.status === "divergent" ? "Also caught by" : "Caught by"}: ${esc(other.join(", "))}. See below.</p>` : "";
+  const alarm = v.run.falseAlarm ? `<p class="stop">${esc(v.run.falseAlarm)}</p>` : "";
+  // The twins agreeing is not the whole verdict when another detector caught the run.
+  const chip = v.run.falseAlarm
+    ? `<span class="chip inconclusive">false alarm</span>`
+    : x.status === "clean" && other.length
+      ? `<span class="chip organ">caught</span>`
+      : `<span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span>`;
   // The request itself belongs in the banner: in the table below it can sit a hundred lines down.
   const lone = v.rows.filter((r) => r.state === "divergent");
   const only =
@@ -300,7 +314,7 @@ function verdictHtml(v: RunPayload): string {
       .map((r) => `<p class="only">${r.decoy && !r.bare ? "Only the decoy twin: " : r.bare && !r.decoy ? "Only the bare twin: " : ""}<span class="mono">${esc(r.key)}</span></p>`)
       .join("") + (lone.length > 4 ? `<p class="only">and ${lone.length - 4} more, in red below.</p>` : "");
   const sub = `${x.stats.shared} seen in both, bare ${x.stats.bare}, decoy ${x.stats.decoy}. ${x.ignored.count} ignored as noise${x.ignored.rules.length ? ` (${x.ignored.rules.join(", ")})` : ""}. Judged ${ago(x.createdAt)}.`;
-  return `<div class="verdict ${x.status}"><span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span><div><p>${esc(head)}</p>${only}${stop}<p class="sub">${esc(sub)}</p></div></div>`;
+  return `<div class="verdict ${v.run.falseAlarm ? "" : x.status}">${chip}<div><p>${esc(head)}</p>${only}${alarm}${stop}<p class="sub">${esc(sub)}</p></div></div>`;
 }
 
 const CHECK_WORDS: Record<string, string> = { checked: "checked", too_little_history: "not judged", nothing_to_check: "nothing to check" };
@@ -309,6 +323,7 @@ const CHECK_WORDS: Record<string, string> = { checked: "checked", too_little_his
 function findingsHtml(v: RunPayload): string {
   if (!v.findings.length && !v.checks.length) return "";
   const jobUrl = (id: string) => safeUrl(v.jobs.find((j) => j.id === id)?.url);
+  const judged = v.jobs.some((j) => /^verdict\b/i.test(j.name));
   // The same finding in both twins (or in several jobs) is one entry that lists the jobs.
   const groups = new Map<string, typeof v.findings>();
   for (const f of v.findings) {
@@ -325,7 +340,7 @@ function findingsHtml(v: RunPayload): string {
       return `<li class="finding${fails ? " fails" : ""}">
         <span class="chip organ">${esc(f.organ)}</span> <span class="mono">${esc(f.key)}</span>
         <p>${esc(f.why)}${more}</p>
-        <p class="meta">${jobs} · ${fails ? "stops the run" : "reported only, does not stop the run"}${seed ? ` · <a href="${esc(ringsHref(seed))}">trace it</a>` : ""}</p>
+        <p class="meta">${jobs} · ${fails ? (judged ? "stops the run" : "stops a run that has a verdict job; this one has none") : "reported only, does not stop the run"}${seed ? ` · <a href="${esc(ringsHref(seed))}">trace it</a>` : ""}</p>
         <p class="meta">Evidence: ${esc(f.evidence)}.</p>
         <p class="meta">Would a CRACI network policy have blocked it? ${esc((f.policy ?? "No. No network rule tells this apart from normal traffic.").replace(/`/g, ""))}</p>
       </li>`;
@@ -348,11 +363,15 @@ function runHtml(v: RunPayload): string {
   const div = v.rows.filter((x) => x.state === "divergent").length;
   let table: string;
   if (v.rows.length) {
+    const lone = v.rows.filter((x) => x.state !== "shared");
+    const fold = v.rows.length > 30;
+    const first = fold && lone.length ? `<ol class="lone">${lone.map(connRow).join("")}</ol>` : "";
+    const all = `<ol>${v.rows.map(connRow).join("")}</ol>`;
     table = `<div class="twins">
         <div class="head"><div><span class="full">Bare twin</span><span class="abbr">bare</span><span class="n">${v.sides.bare ? plural(v.sides.bare.observations, "observation") : ""}</span></div><div><span class="full">Decoy twin</span><span class="abbr">decoy</span><span class="n">${v.sides.decoy ? plural(v.sides.decoy.observations, "observation") : ""}</span></div><div class="one"></div></div>
-        <ol>${v.rows.map(connRow).join("")}</ol>
+        ${fold ? `${first}<details class="allconn"><summary>All ${plural(v.rows.length, "connection")}, in the order CRACI recorded them</summary>${all}</details>` : all}
       </div>
-      <p class="after">In the order CRACI recorded them. Repeats are folded into one line. ${div ? "Red lines are what only one twin did." : ""}</p>`;
+      <p class="after">${fold && lone.length ? "What only one twin did comes first. " : ""}Repeats are folded into one line. ${div ? "Red lines are what only one twin did." : ""}</p>`;
   } else if (v.solo?.length) {
     table = v.solo
       .map((j) => `<h3 class="solo">Job "${esc(j.name)}" <span class="n">${plural(j.keys.length, "connection")}</span></h3><ol class="solo">${j.keys.map((k) => `<li class="mono">${esc(k)}</li>`).join("")}</ol>`)
@@ -520,6 +539,18 @@ function syncPanes(v: RunPayload) {
   if (!host) return;
   const hits = [...new Set(v.rows.filter((r) => r.state === "divergent" && r.host).map((r) => r.host))];
   let any = false;
+  // A run without twins: the log CRACI keeps for each of its jobs.
+  for (const j of v.twins.bare || v.twins.decoy ? [] : (v.solo ?? []).slice(0, 2)) {
+    any = true;
+    const key = `solo:${j.jobId}`;
+    let pane = panes.get(key);
+    if (!pane) {
+      pane = new LogPane(v.run.repo, "solo", { jobId: j.jobId, name: j.name, status: "", url: "", running: false, hasLog: false });
+      panes.set(key, pane);
+      host.append(pane.el);
+    }
+    pane.update(pane.job, v.liveLogs, ["posted to"]);
+  }
   for (const which of ["bare", "decoy"] as const) {
     const job = v.twins[which];
     if (!job) continue;

@@ -4,7 +4,7 @@ import { detectContext, detectRun, judge } from "../src/detect.ts";
 import { buildFleetJob, FleetIndex, ghaCachesOfSbom, syncCaches, unknownArtifact } from "../src/fleet.ts";
 import { ringFence, rings, buildGraph } from "../src/graph.ts";
 import type { NetworkObservation, PreviewArtifactProvenance } from "../src/types.ts";
-import { ghJob, httpObs, logLines, npmBuild, sbom, sha, trace } from "./factories.ts";
+import { dnsObs, ghJob, httpObs, logLines, npmBuild, sbom, sha, trace } from "./factories.ts";
 
 const REPO = "test-org/test-web";
 const ENTRY = "6629298651489501712"; // larger than a JS number can hold exactly, like CRACI's real entry ids
@@ -84,6 +84,15 @@ describe("new egress", () => {
     // once merged code has called it, it is no longer new
     const merged = await fleet([...history([beacon]), { id: 91, run: 9, event: "pull_request", minute: 60, obs: [...npmBuild(), beacon] }]);
     expect(detectRun(detectContext(merged), REPO, "9").findings).toEqual([]);
+  });
+
+  test("the runner's own check that GitHub resolves is not egress of the build (real run 43623658190)", async () => {
+    const check = [dnsObs("copilot-proxy.githubusercontent.com"), httpObs("https://copilot-proxy.githubusercontent.com/_dns"), dnsObs("pkg.github.com"), httpObs("https://pkg.github.com/_dns")];
+    const index = await fleet([...history(), { id: 91, run: 9, minute: 60, obs: [...npmBuild(), ...check] }]);
+    expect(detectRun(detectContext(index), REPO, "9").findings).toEqual([]);
+    // the same host used for anything else is egress, and no other host may hide behind /_dns
+    const used = await fleet([...history(), { id: 91, run: 9, minute: 60, obs: [...npmBuild(), ...check, httpObs("https://pkg.github.com/upload", { method: "POST" }), httpObs("https://evil.test/_dns")] }]);
+    expect(detectRun(detectContext(used), REPO, "9").findings.map((f) => f.key).sort()).toEqual(["evil.test", "pkg.github.com"]);
   });
 
   test("runner plumbing that CRACI always allows is never new", async () => {
@@ -169,6 +178,23 @@ describe("same URL, new bytes", () => {
     const f = detectRun(detectContext(index), REPO, "9").findings.filter((x) => x.organ === "same URL, new bytes");
     expect(f.map((x) => x.fails)).toEqual([false]);
     expect(judge("clean", f)).toEqual({ result: "pass", caughtBy: ["same URL, new bytes"] });
+  });
+});
+
+describe("twin downloads", () => {
+  test("the server answers the twin that carries credentials with other bytes", async () => {
+    const payload = (seed: string) => httpObs("https://cdn.tool.test/setup.js", { bodyHash: { sha256: sha(seed) } });
+    const health = (seed: string) => httpObs("https://run.actions.githubusercontent.com/health", { bodyHash: { sha256: sha(seed) } });
+    const index = await fleet([
+      ...history(),
+      { id: 91, run: 9, name: "build (bare)", minute: 60, obs: [...npmBuild(), payload("plain"), health("a")] },
+      { id: 92, run: 9, name: "build (decoy)", minute: 60, obs: [...npmBuild(), payload("armed"), health("b")] },
+    ]);
+    const f = detectRun(detectContext(index), REPO, "9").findings.filter((x) => x.organ === "twin downloads");
+    expect(f.map((x) => [x.jobName, x.key, x.fails])).toEqual([["build (decoy)", "cdn.tool.test/setup.js", true]]);
+    // same bytes in both twins: nothing
+    expect(detectRun(detectContext(index), REPO, "3").findings).toEqual([]);
+    expect(detectRun(detectContext(index), REPO, "3").checks.find((c) => c.organ === "twin downloads")).toMatchObject({ state: "checked" });
   });
 });
 

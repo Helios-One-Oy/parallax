@@ -9,7 +9,7 @@ import type { GhCache, GhJob, GhRun, GithubClient } from "./github.ts";
 import { cacheEventsFromLog, ociRefsFromTrace, type OciRefs } from "./graph.ts";
 import { hostsOf, normalizeTrace, splitUrl } from "./normalize.ts";
 import { fleetDir } from "./paths.ts";
-import { MUTABLE_URL_RULES, PLATFORM_HOSTS, REGISTRY_404_RULES, UNTRUSTED_EVENTS } from "./rules.ts";
+import { MUTABLE_URL_RULES, PLATFORM_HOSTS, RUNNER_CHECK, REGISTRY_404_RULES, UNTRUSTED_EVENTS } from "./rules.ts";
 import type { CycloneDxBom, NetworkTrace, PreviewArtifactProvenance } from "./types.ts";
 
 export type FleetJob = {
@@ -325,14 +325,22 @@ export class FleetIndex implements FleetLookup {
       if (untrusted && UNTRUSTED_EVENTS.includes(e.event)) continue;
       earlierJobs++;
       runs.add(e.runId);
-      for (const h of e.hosts) known.add(h);
+      for (const h of e.hosts) if (!onlyRunnerCheck(e, h)) known.add(h);
     }
     return {
-      hosts: j.hosts.filter((h) => !known.has(h) && !PLATFORM_HOSTS.some((re) => re.test(h))),
+      hosts: j.hosts.filter((h) => !known.has(h) && !PLATFORM_HOSTS.some((re) => re.test(h)) && !onlyRunnerCheck(j, h)),
       earlierJobs,
       earlierRuns: runs.size,
     };
   }
+}
+
+/** Did this job touch the host only through the runner's own "does GitHub resolve" check (rules.RUNNER_CHECK)? */
+function onlyRunnerCheck(j: FleetJob, h: string): boolean {
+  if (!RUNNER_CHECK.host.test(h)) return false;
+  const check = `http GET ${h}${RUNNER_CHECK.path}`;
+  const mine = j.keys.filter((k) => k.split(" ").some((part) => part === h || part.startsWith(`${h}/`) || part.startsWith(`${h}:`)));
+  return mine.includes(check) && mine.every((k) => k === check || k.startsWith("dns "));
 }
 
 function seen(j: FleetJob): Seen {

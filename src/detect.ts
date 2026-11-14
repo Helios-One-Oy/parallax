@@ -3,10 +3,10 @@
 // shows the same findings everywhere.
 import type { FleetIndex, FleetJob } from "./fleet.ts";
 import { buildGraph, cacheLineageAlerts, canonRegistry, foreignImagePulls, ourImageRepos, type Graph, type ImageAlert, type LineageAlert } from "./graph.ts";
-import { MIN_EGRESS_RUNS, MIN_STABLE_JOBS, UNTRUSTED_EVENTS } from "./rules.ts";
+import { MIN_EGRESS_RUNS, MIN_STABLE_JOBS, MUTABLE_URL_RULES, TWIN_JOB_PATTERNS, UNTRUSTED_EVENTS } from "./rules.ts";
 import type { Check, Finding, Organ, Verdict } from "./types.ts";
 
-export const ORGANS: Organ[] = ["twins", "new egress", "cache lineage", "same URL, new bytes", "image provenance", "registry 404"];
+export const ORGANS: Organ[] = ["twins", "twin downloads", "new egress", "cache lineage", "same URL, new bytes", "image provenance", "registry 404"];
 
 type Drift = ReturnType<FleetIndex["urlHashDrift"]>[number];
 
@@ -148,6 +148,39 @@ export function detectRun(ctx: DetectContext, repo: string, runId: string): RunD
       ? { organ: "same URL, new bytes", state: "checked", note: `${plural(urls, "download")} with a CRACI body hash compared with every earlier job in the fleet.` }
       : { organ: "same URL, new bytes", state: "nothing_to_check", note: "No download with a CRACI body hash in this run." },
   );
+
+  // ---- twin downloads: the same address, fetched by both twins, answered with different bytes ----
+  const bare = traced.find((j) => TWIN_JOB_PATTERNS.bare.test(j.name));
+  const decoy = traced.find((j) => TWIN_JOB_PATTERNS.decoy.test(j.name));
+  if (!bare || !decoy) checks.push({ organ: "twin downloads", state: "nothing_to_check", note: "This run does not have two twins with a CRACI trace." });
+  else {
+    const by = (j: FleetJob) => {
+      const m = new Map<string, Set<string>>();
+      for (const [u, h] of j.urlHashes) m.set(u, (m.get(u) ?? new Set<string>()).add(h));
+      return m;
+    };
+    const b = by(bare);
+    let both = 0;
+    for (const [url, hs] of by(decoy)) {
+      const other = b.get(url);
+      // Addresses whose bytes change by design (index pages, health checks) say nothing.
+      if (!other || MUTABLE_URL_RULES.some((r) => r.match.test(url))) continue;
+      both++;
+      if ([...hs].some((h) => other.has(h))) continue;
+      findings.push({
+        organ: "twin downloads",
+        jobId: decoy.jobId,
+        jobName: decoy.name,
+        key: url,
+        host: hostOf(url),
+        why: `Both twins fetched ${url}. The decoy twin, which carries fake credentials, got different bytes (sha256 ${short([...hs][0]!)}…) than the bare twin (sha256 ${short([...other][0]!)}…).`,
+        evidence: `CRACI body hashes in the network traces of job ${bare.jobId} and job ${decoy.jobId}`,
+        fails: true,
+        policy: null,
+      });
+    }
+    checks.push({ organ: "twin downloads", state: "checked", note: `${plural(both, "download")} that both twins made compared byte for byte (CRACI body hashes).` });
+  }
 
   // ---- image provenance ----
   const pulls = traced.flatMap((j) => (j.oci?.manifests ?? []).filter((m) => m.op === "pull" && m.digest && ctx.ourRepos(m.registry, m.name)));

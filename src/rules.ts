@@ -167,6 +167,11 @@ export const PLATFORM_HOSTS: RegExp[] = [
   /^cache\.blob\.core\.windows\.net$/,
 ];
 
+// Seen in real traces: at job start the runner itself asks, in about one job in twenty, whether GitHub's
+// hosts resolve (GET <host>/_dns on api.github.com, codeload.github.com, github.com, pkg.github.com,
+// copilot-proxy.githubusercontent.com). A GitHub host a job touched in no other way is not egress of the build.
+export const RUNNER_CHECK = { host: /(^|\.)(github\.com|githubusercontent\.com)$/, path: "/_dns" };
+
 // Lines printed by actions/cache and the setup-* actions. Group 1 = the cache key.
 export const CACHE_RESTORE_LOG_PATTERNS: RegExp[] = [
   /Cache restored from key:\s*(\S.*?)\s*$/,

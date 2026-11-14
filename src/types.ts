@@ -196,7 +196,7 @@ export type Divergence = {
 };
 
 /** The detectors, by the name shown everywhere. "twins" findings are the `divergences`. */
-export type Organ = "twins" | "new egress" | "cache lineage" | "same URL, new bytes" | "image provenance" | "registry 404";
+export type Organ = "twins" | "twin downloads" | "new egress" | "cache lineage" | "same URL, new bytes" | "image provenance" | "registry 404";
 
 /** Something a detector other than the twin diff found for one job of the run. */
 export type Finding = {

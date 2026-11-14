@@ -122,7 +122,8 @@ export function createApp(o: AppOptions) {
           liveAsked = now();
           liveAsking = null;
         });
-      await liveAsking;
+      // A page never waits for CRACI once there is a list to show; the first answer waits 3 s at most.
+      if (!live) await Promise.race([liveAsking, new Promise((r) => setTimeout(r, 3000))]);
     }
     return live ? { jobs: live.jobs, at: live.iso } : null;
   }

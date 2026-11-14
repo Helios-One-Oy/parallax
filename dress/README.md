@@ -4,7 +4,9 @@ Composite GitHub Action. Input `twin: bare | decoy`.
 
 - **bare**: puts a passthrough `plx-run` on `$GITHUB_PATH`, sets `PLX_TWIN=bare`.
 - **decoy**: also generates RANDOM fake credentials at run time (right prefix and
-  length) and lays them out the way real malware looks for them, so a CI-aware
+  length; the npm token carries the CRC-32 checksum real npm tokens carry, so an
+  offline format check cannot tell it from a real one) and lays them out the way
+  real malware looks for them, so a CI-aware
   payload reveals itself:
   - env (via `$GITHUB_ENV`): `NPM_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
     `PYPI_TOKEN`, `TWINE_PASSWORD`, `DOCKERHUB_TOKEN`, `CARGO_REGISTRY_TOKEN`, `PLX_TWIN=decoy`.

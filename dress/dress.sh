@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Parallax dress. Prepares a build twin.
 #   bare  : put a passthrough plx-run on PATH, set PLX_TWIN=bare.
-#   decoy : also generate RANDOM fake credentials (right prefix + length), export
+#   decoy : also generate RANDOM fake credentials (right prefix, length and checksum), export
 #           them as the env vars and files real malware greps for, and set
 #           PLX_TWIN=decoy so plx-run adds a release-looking GITHUB_* context.
 #
@@ -37,10 +37,25 @@ rnd() { LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$1"; }
 # random base64url-ish string of length $1
 rnd_b64() { LC_ALL=C tr -dc 'A-Za-z0-9_-' < /dev/urandom | head -c "$1"; }
 
-NPM_TOKEN="npm_$(rnd 36)"
-AWS_ACCESS_KEY_ID="AKIA$(LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 16)"
+# The fakes must survive a format check done offline, or a careful payload would
+# tell the decoy from a real release without making a single connection.
+# CRC-32 of a string, read from the trailer gzip writes (no interpreter needed).
+crc32() { printf '%s' "$1" | gzip -c | tail -c 8 | od -An -N4 -tu4 | tr -d ' '; }
+# base62 (0-9A-Za-z), left-padded with 0 to six characters
+b62_6() {
+  local n="$1" a='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' s=''
+  while [ "$n" -gt 0 ]; do s="${a:$((n % 62)):1}$s"; n=$((n / 62)); done
+  printf '%6s' "$s" | tr ' ' '0'
+}
+
+# npm: "npm_" + 30 random characters + the CRC-32 of those 30 in base62, as real npm tokens are built.
+NPM_BODY="$(rnd 30)"
+NPM_TOKEN="npm_${NPM_BODY}$(b62_6 "$(crc32 "$NPM_BODY")")"
+# AWS: key ids use the base32 alphabet (A-Z, 2-7).
+AWS_ACCESS_KEY_ID="AKIA$(LC_ALL=C tr -dc 'A-Z2-7' < /dev/urandom | head -c 16)"
 AWS_SECRET_ACCESS_KEY="$(LC_ALL=C tr -dc 'A-Za-z0-9+/' < /dev/urandom | head -c 40)"
-PYPI_TOKEN="pypi-$(rnd_b64 120)"
+# PyPI: every real token starts with the same bytes (the encoded "pypi.org" header).
+PYPI_TOKEN="pypi-AgEIcHlwaS5vcmc$(rnd_b64 140)"
 DOCKERHUB_TOKEN="dckr_pat_$(rnd 27)"
 CARGO_REGISTRY_TOKEN="$(rnd_b64 44)"
 

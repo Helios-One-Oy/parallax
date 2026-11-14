@@ -9,7 +9,7 @@ import type { GhCache, GhJob, GhRun, GithubClient } from "./github.ts";
 import { cacheEventsFromLog, ociRefsFromTrace, type OciRefs } from "./graph.ts";
 import { hostsOf, normalizeTrace, splitUrl } from "./normalize.ts";
 import { fleetDir } from "./paths.ts";
-import { MUTABLE_URL_RULES, REGISTRY_404_RULES } from "./rules.ts";
+import { MUTABLE_URL_RULES, PLATFORM_HOSTS, REGISTRY_404_RULES, UNTRUSTED_EVENTS } from "./rules.ts";
 import type { CycloneDxBom, NetworkTrace, PreviewArtifactProvenance } from "./types.ts";
 
 export type FleetJob = {
@@ -40,11 +40,44 @@ export type FleetJob = {
   /** Keys CRACI's network policy blocked. */
   denied: Array<{ key: string; reason: string | null }>;
   cache: { restored: string[]; saved: string[] };
+  /**
+   * GitHub Actions cache entries CRACI lists in the job's SBOM (`pkg:ghacache/…?entry_id=N&key=K`):
+   * caches the job restored or wrote. CRACI's cache provenance says which (by entry id).
+   */
+  ghaCaches?: GhaCacheRef[];
   oci: OciRefs;
   indexedAt: string;
+  /** Version of the rules this record was derived with (INDEX_VERSION). Older records are derived again. */
+  v?: number;
 };
 
-export type CacheRecord = GhCache & {
+export type GhaCacheRef = { entryId: string; key: string; version: string };
+
+/** Bump when normalisation rules or the derived fields change: records are then rebuilt from the API cache. */
+export const INDEX_VERSION = 2;
+
+/** Cache entries named in a CRACI SBOM. */
+export function ghaCachesOfSbom(bom: CycloneDxBom | null | undefined): GhaCacheRef[] {
+  const out = new Map<string, GhaCacheRef>();
+  const walk = (list: CycloneDxBom["components"]) => {
+    for (const c of list ?? []) {
+      const purl = typeof c?.purl === "string" ? c.purl : "";
+      if (purl.startsWith("pkg:ghacache/")) {
+        const [head, query = ""] = purl.split("?");
+        const q = new URLSearchParams(query);
+        const entryId = q.get("entry_id") ?? "";
+        if (/^\d+$/.test(entryId)) out.set(entryId, { entryId, key: q.get("key") ?? "", version: head!.split("@")[1] ?? "" });
+      }
+      if (Array.isArray(c?.components)) walk(c.components);
+    }
+  };
+  walk(Array.isArray(bom?.components) ? bom!.components : []);
+  return [...out.values()];
+}
+
+export type CacheRecord = Omit<GhCache, "id"> & {
+  /** GitHub's cache id, or CRACI's cache entry id (a number too large for a JS number, so a string). */
+  id: number | string;
   repo: string;
   /** CRACI digest of the cache archive, when CRACI knows the cache. */
   digest: string | null;
@@ -111,8 +144,10 @@ export function buildFleetJob(input: {
     notFound: [...notFound].sort(),
     denied: [...denied].map(([key, reason]) => ({ key, reason })),
     cache: events,
+    ghaCaches: ghaCachesOfSbom(sbom),
     oci: ociRefsFromTrace(trace),
     indexedAt: input.now ?? new Date().toISOString(),
+    v: INDEX_VERSION,
   };
 }
 
@@ -250,19 +285,32 @@ export class FleetIndex implements FleetLookup {
       .sort((a, b) => b.jobs.length - a.jobs.length || a.name.localeCompare(b.name));
   }
 
-  /** Hosts this job contacted that no earlier job of the same repo did (other jobs of the same run do not count as earlier). */
-  newEgress(job: FleetJob | { repo: string; jobId: string }): { hosts: string[]; earlierJobs: number } {
+  /**
+   * Hosts this job contacted that no earlier job of the same repo did. Other jobs of the same run do
+   * not count as earlier. A job of a run anyone can trigger (a pull request) is compared only with what
+   * jobs of trusted runs did before: unmerged code cannot vouch for itself. Runner plumbing that CRACI
+   * always allows (GitHub Actions services, the cache store) is never "new".
+   */
+  newEgress(job: FleetJob | { repo: string; jobId: string }): { hosts: string[]; earlierJobs: number; earlierRuns: number } {
     const j = "hosts" in job ? job : this.getJob(job.repo, job.jobId);
-    if (!j) return { hosts: [], earlierJobs: 0 };
+    if (!j) return { hosts: [], earlierJobs: 0, earlierRuns: 0 };
+    const untrusted = UNTRUSTED_EVENTS.includes(j.event);
     const known = new Set<string>();
+    const runs = new Set<string>();
     let earlierJobs = 0;
     for (const e of this.jobs.values()) {
       if (e.repo !== j.repo || e.runId === j.runId || !e.hasTrace) continue;
       if (!(e.startedAt < j.startedAt)) continue;
+      if (untrusted && UNTRUSTED_EVENTS.includes(e.event)) continue;
       earlierJobs++;
+      runs.add(e.runId);
       for (const h of e.hosts) known.add(h);
     }
-    return { hosts: j.hosts.filter((h) => !known.has(h)), earlierJobs };
+    return {
+      hosts: j.hosts.filter((h) => !known.has(h) && !PLATFORM_HOSTS.some((re) => re.test(h))),
+      earlierJobs,
+      earlierRuns: runs.size,
+    };
   }
 }
 
@@ -362,7 +410,10 @@ export async function syncFleet(o: {
               let logs = "";
               if (trace) logs = await o.craci.getJobLogs(repo, String(job.id), { cache: true }).catch(() => "");
               if (!trace && fresh) return; // may still appear: ask again on the next sync
-              await o.index.addJob(buildFleetJob({ repo, job, run, trace, sbom, logs }));
+              const record = buildFleetJob({ repo, job, run, trace, sbom, logs });
+              // What CRACI knows about the caches this job touched goes in before the job itself.
+              await syncCaches(o.index, o.craci, repo, record.ghaCaches ?? []);
+              await o.index.addJob(record);
               if (trace) row.jobsNew++;
               else row.jobsWithoutTrace++;
               log(`${repo} job ${job.id} "${job.name}": ${trace ? `${trace.observations.length} observations` : "no CRACI trace"}`);
@@ -370,6 +421,8 @@ export async function syncFleet(o: {
           );
         }
       }
+      // Cache entries of jobs indexed earlier whose provenance CRACI did not have yet.
+      for (const j of [...o.index.jobs.values()]) if (j.repo === repo) await syncCaches(o.index, o.craci, repo, j.ghaCaches ?? []);
       for (const c of await o.github.listCaches(repo)) {
         const prov = await o.craci.getGhaCacheProvenance({ cacheId: c.id }).catch(() => null);
         await o.index.addCache({ ...c, repo, digest: prov?.digest ?? null, provenance: prov });
@@ -397,7 +450,11 @@ export async function syncFleet(o: {
         kind === "manifest"
           ? ((await o.craci.getOciManifestProvenance(digest)) ?? (await o.craci.getOciBlobProvenance(digest)))
           : await o.craci.getOciBlobProvenance(digest);
-      if (!prov) continue;
+      if (!prov) {
+        // Remember that CRACI was asked and knows no job that produced it: only then can a pull of it be called foreign.
+        if (kind === "manifest" && !o.index.artifacts.has(digest)) await o.index.addArtifact(unknownArtifact(digest));
+        continue;
+      }
       await o.index.addArtifact(prov);
       report.artifacts++;
       if (depth < 3)
@@ -408,4 +465,61 @@ export async function syncFleet(o: {
   }
   await o.index.compact();
   return report;
+}
+
+/** The record kept for a manifest CRACI was asked about and knows no producing job for. */
+export function unknownArtifact(digest: string): PreviewArtifactProvenance {
+  return { artifact_id: "", kind: "oci_manifest", digest, jobs_created_in: [], refers: [], unknown_to_craci: true };
+}
+
+/** Ask CRACI who wrote these cache entries and keep the answers. Entries CRACI already answered for are skipped. */
+export async function syncCaches(index: FleetIndex, craci: Pick<CraciClient, "getGhaCacheProvenance">, repo: string, refs: GhaCacheRef[]): Promise<void> {
+  for (const c of refs) {
+    if (index.caches.get(`${repo}#${c.entryId}`)?.provenance) continue;
+    const prov = await craci.getGhaCacheProvenance({ cacheId: c.entryId }).catch(() => null);
+    if (!prov) continue;
+    const made = prov.jobs_created_in?.[0];
+    const meta = made?.metadata?.kind === "gha_cache" ? made.metadata : null;
+    await index.addCache({
+      repo,
+      id: c.entryId,
+      key: meta?.cache_key || c.key,
+      ref: "",
+      version: meta?.version || c.version,
+      created_at: made?.accepted_at ?? "",
+      size_in_bytes: meta?.size_bytes ?? 0,
+      digest: prov.digest ?? null,
+      provenance: prov,
+    });
+  }
+}
+
+/**
+ * Derive again, from the on-disk API cache, every record that was built with older rules. No job is
+ * asked for twice: a record whose trace is not on disk is left as it is.
+ */
+export async function reindexStale(index: FleetIndex, craci: Pick<CraciClient, "getNetworkTrace" | "getSbom" | "getJobLogs">): Promise<number> {
+  let n = 0;
+  for (const j of [...index.jobs.values()]) {
+    if (!j.hasTrace || j.v === INDEX_VERSION) continue;
+    const trace = await craci.getNetworkTrace(j.repo, j.jobId, { waitFor: 0 }).catch(() => null);
+    if (!trace) continue;
+    const sbom = await craci.getSbom(j.repo, j.jobId, { waitFor: 0 }).catch(() => null);
+    const logs = await craci.getJobLogs(j.repo, j.jobId, { cache: true }).catch(() => "");
+    const fresh = buildFleetJob({
+      repo: j.repo,
+      job: {
+        id: Number(j.jobId), run_id: Number(j.runId), run_attempt: j.runAttempt, name: j.name, status: j.status, conclusion: j.conclusion,
+        started_at: j.startedAt || null, completed_at: j.completedAt, html_url: j.url, head_sha: j.commitSha, head_branch: j.branch, workflow_name: j.workflow,
+      },
+      run: { event: j.event },
+      trace,
+      sbom,
+      logs,
+    });
+    index.jobs.set(jobKey(j.repo, j.jobId), fresh);
+    n++;
+  }
+  if (n) await index.compact();
+  return n;
 }

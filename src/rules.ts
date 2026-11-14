@@ -163,6 +163,8 @@ export const PLATFORM_HOSTS: RegExp[] = [
   /(^|\.)actions\.githubusercontent\.com$/,
   /^productionresultssa\*\.blob\.core\.windows\.net$/,
   /(^|\.)craci\.com$/,
+  // CRACI's own store for GitHub Actions caches (matchedRule "github-actions-cache-…" in real traces).
+  /^cache\.blob\.core\.windows\.net$/,
 ];
 
 // Lines printed by actions/cache and the setup-* actions. Group 1 = the cache key.
@@ -189,3 +191,9 @@ export const SETUP_STEP_PATTERN = /^(Set up job|Complete job|Post |Pre |Run [\w.
 // Workflow events anyone outside the team can trigger. A cache written by such a job and restored by a
 // job of a trusted event is the cache-poisoning pattern (graph.cacheLineageAlerts).
 export const UNTRUSTED_EVENTS = ["pull_request", "pull_request_target", "issue_comment", "issues", "discussion", "discussion_comment", "fork", "watch"];
+
+// New egress means something only against some history: this many earlier runs of the repo with a CRACI trace.
+export const MIN_EGRESS_RUNS = 3;
+
+// "Same URL, new bytes" fails the verdict only when the old bytes were seen by at least this many earlier jobs.
+export const MIN_STABLE_JOBS = 2;

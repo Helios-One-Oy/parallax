@@ -195,15 +195,56 @@ export type Divergence = {
   why: string;
 };
 
+/** The detectors, by the name shown everywhere. "twins" findings are the `divergences`. */
+export type Organ = "twins" | "new egress" | "cache lineage" | "same URL, new bytes" | "image provenance" | "registry 404";
+
+/** Something a detector other than the twin diff found for one job of the run. */
+export type Finding = {
+  organ: Exclude<Organ, "twins">;
+  /** The job of this run it was found in. */
+  jobId: string;
+  jobName: string;
+  /** What it is about: a host, a cache key, a URL, an image tag or a package name. */
+  key: string;
+  host: string;
+  /** One plain sentence. */
+  why: string;
+  /** Which CRACI or GitHub record shows it. */
+  evidence: string;
+  /** True when this finding fails the verdict job. */
+  fails: boolean;
+  /** Would a CRACI `network:` policy have stopped it, in one sentence. Null when no network rule can. */
+  policy: string | null;
+};
+
+/** Whether a detector could say anything for this run, and on how much data. */
+export type Check = {
+  organ: Organ;
+  state: "checked" | "too_little_history" | "nothing_to_check";
+  note: string;
+};
+
 export type Verdict = {
   repo: string;
   runId: string;
   commitSha: string;
   branch: string;
   twins: { bare: JobRef; decoy: JobRef };
+  /** The twin diff alone. */
   status: "clean" | "divergent" | "inconclusive";
   divergences: Divergence[];
   ignored: { count: number; rules: string[] };
   stats: { bare: number; decoy: number; shared: number };
   createdAt: string;
+  // ---- added 14 Nov: one verdict, all detectors. Absent in verdict files written before. ----
+  /** What the other detectors found for the jobs of this run. Empty when they found nothing. */
+  findings?: Finding[];
+  /** One line per detector: did it have enough to go on. */
+  checks?: Check[];
+  /** Every job of the run that was looked at, and whether CRACI had a trace for it. */
+  jobs?: Array<JobRef & { traced: boolean }>;
+  /** What the verdict job does: fail = the twins diverged or a finding that fails was made. */
+  result?: "pass" | "fail" | "inconclusive";
+  /** The detectors that caught something, in the order above. */
+  caughtBy?: Organ[];
 };

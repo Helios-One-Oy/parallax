@@ -139,6 +139,8 @@ export async function buildFixtureDir(dir: string): Promise<{ dir: string }> {
   };
   await index.addArtifact(art);
   s = { repo: API, run: RUNS.image, branch: "ci/base-22", event: "push", minute: 72, title: "Build on the shared base image" };
+  // CRACI was asked about the digest the tag now returns and knows no job that produced it.
+  await index.addArtifact({ artifact_id: "", kind: "oci_manifest", digest: `sha256:${FOREIGN}`, jobs_created_in: [], refers: [], unknown_to_craci: true });
   await job(s, "build image", [...npmBuild().slice(0, 4), httpObs("https://ghcr.io/v2/test-org/base/manifests/22", { bodyHash: { sha256: FOREIGN } })], ["pkg:pypi/requests@2.32.3"], logLines("Run docker build"));
   run(s);
 

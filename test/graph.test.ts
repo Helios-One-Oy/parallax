@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildFleetJob } from "../src/fleet.ts";
+import { buildFleetJob, unknownArtifact } from "../src/fleet.ts";
 import { buildGraph, cacheEventsFromLog, cacheLineageAlerts, cacheNodeId, deriveCacheRestores, foreignImagePulls, jobNodeId, ociRefsFromTrace, r0, ringFence, rings } from "../src/graph.ts";
 import type { JobSummary } from "../src/types.ts";
 import { at, ghJob, httpObs, jobMeta, logLines, trace } from "./factories.ts";
@@ -152,6 +152,8 @@ describe("detectors on the same graph", () => {
         sbom: null,
       }),
     );
+    expect(foreignImagePulls(index)).toEqual([]); // CRACI has not been asked about the new digest yet: unknown is not foreign
+    await index.addArtifact(unknownArtifact(moved));
     const alerts = foreignImagePulls(index);
     expect(alerts).toHaveLength(1); // the public node image is not ours, so it is not judged
     expect(alerts[0]).toMatchObject({ repo: API, jobId: "203", image: "ghcr.io/test-org/web:v1", digest: moved, ours: [M1] });

@@ -1,7 +1,8 @@
 name: Parallax verdict
 description: >
-  Compare the bare and the decoy twin of this run using their CRACI network traces and SBOMs.
-  Fails the job when the twins behaved differently.
+  Judge this run from what CRACI recorded: compare the bare and the decoy twin (network traces and SBOMs),
+  then ask every other detector about the same jobs (new egress, cache lineage, same URL new bytes,
+  image provenance, registry 404). Fails the job when any of them found something.
 
 inputs:
   craci-token:
@@ -16,14 +17,20 @@ inputs:
     required: false
     default: "false"
   history:
-    description: How many earlier bare runs of this repo to compare against, to filter out connections that come and go.
+    description: How many earlier bare runs of this repo to compare against, to filter out connections that come and go. 0 = no history at all (new egress is then not judged).
     required: false
     default: "5"
 
 outputs:
   status:
-    description: clean, divergent or inconclusive
+    description: "The twin diff alone: clean, divergent or inconclusive"
     value: ${{ steps.verdict.outputs.status }}
+  result:
+    description: "All detectors together: pass, fail, inconclusive or error"
+    value: ${{ steps.verdict.outputs.result }}
+  caught-by:
+    description: "The detectors that found something, comma separated (twins, new egress, cache lineage, same URL, new bytes, image provenance, registry 404)"
+    value: ${{ steps.verdict.outputs.caught_by }}
 
 runs:
   using: composite
@@ -46,20 +53,23 @@ runs:
         code=$?
         set -e
         case "$code" in
-          0) status=clean ;;
-          1) status=divergent ;;
-          2) status=inconclusive ;;
-          *) status=error ;;
+          0) result=pass ;;
+          1) result=fail ;;
+          2) result=inconclusive ;;
+          *) result=error ;;
         esac
-        echo "status=$status" >> "$GITHUB_OUTPUT"
-        if [ "$status" = clean ]; then exit 0; fi
-        if [ "$status" = inconclusive ] && [ "$PLX_ALLOW_INCONCLUSIVE" = true ]; then
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+        # The CLI writes status= and caught_by= itself; when it stopped before that, say so.
+        grep -q '^status=' "$GITHUB_OUTPUT" || echo "status=inconclusive" >> "$GITHUB_OUTPUT"
+        caught=$(grep '^caught_by=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)
+        if [ "$result" = pass ]; then exit 0; fi
+        if [ "$result" = inconclusive ] && [ "$PLX_ALLOW_INCONCLUSIVE" = true ]; then
           echo "::warning::Parallax could not compare the twins (inconclusive). Passing because allow-inconclusive is true."
           exit 0
         fi
-        if [ "$status" = divergent ]; then
-          echo "::error::Parallax: the bare and the decoy twin behaved differently. See the job summary."
-        elif [ "$status" = inconclusive ]; then
+        if [ "$result" = fail ]; then
+          echo "::error::Parallax stopped this run. Caught by: ${caught:-see the job summary}. See the job summary."
+        elif [ "$result" = inconclusive ]; then
           echo "::error::Parallax could not compare the twins (inconclusive). See the job summary."
         else
           echo "::error::Parallax stopped with an error (exit code $code)."

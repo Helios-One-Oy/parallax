@@ -297,7 +297,9 @@ export type PolicySuggestion = {
  * bare twin is known to do from history) is allowed, everything else is denied.
  * Call with just the verdict right after diffTwins; for a verdict loaded from disk pass the bare trace too.
  */
-export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | NormTrace | null): PolicySuggestion {
+export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | NormTrace | null, o: { denyHosts?: Iterable<string> } = {}): PolicySuggestion {
+  // Hosts another detector flagged (new egress): both twins contacted them, and the policy must still not open them.
+  const deny = new Set(o.denyHosts ?? []);
   const ctx = (verdict as WithContext)[CONTEXT];
   const nb: NormTrace | null = bareTrace
     ? "keys" in bareTrace && bareTrace.keys instanceof Map
@@ -329,6 +331,7 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
     for (const n of list) {
       const o = n.raw as any;
       if (!n.host || n.kind === "dns") continue; // DNS needs no rule: names resolve even for blocked destinations
+      if (deny.has(n.host)) continue;
       if (o.http?.policyDenied || o.tcp?.allowed === false || o.sshGit?.allowed === false) continue;
       if (PLATFORM_HOSTS.some((re) => re.test(n.host))) {
         allowedHosts.add(n.host);
@@ -377,7 +380,7 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
     if (t.size === 0) tcp.delete(h);
   }
 
-  const blocked = [...new Set(verdict.divergences.map((d) => d.host).filter((h) => h && !allowedHosts.has(h)))].sort();
+  const blocked = [...new Set([...verdict.divergences.map((d) => d.host), ...deny].filter((h) => h && !allowedHosts.has(h)))].sort();
   const sortedPresets = [...presets].sort();
   const tlsList = [...tls].map(([host, ports]) => ({ host, ports: [...ports].sort((a, b) => a - b) })).sort((a, b) => a.host.localeCompare(b.host));
   const tcpList: PolicySuggestion["tcp"] = [...tcp]

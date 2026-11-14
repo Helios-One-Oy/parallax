@@ -108,7 +108,24 @@ export function deriveCacheRestores(
   const selfMade = (c: CacheRecord) => cacheCreators(c).some((j) => j.repo === job.repo && j.jobId === job.jobId);
   const end = job.completedAt ?? job.startedAt;
 
+  // 0. CRACI's own record: the job's SBOM lists the cache entry, and cache provenance names another job as its writer.
+  for (const g of job.ghaCaches ?? []) {
+    const rec = mine.find((c) => String(c.id) === g.entryId) ?? null;
+    const wroteIt = rec ? selfMade(rec) : false;
+    const knownWriter = !!rec && cacheCreators(rec).length > 0;
+    // Without provenance only the job's own log can tell a restore from a save.
+    if (wroteIt || (!knownWriter && !job.cache.restored.includes(g.key))) continue;
+    const nodeId = cacheNodeId(job.repo, g.entryId);
+    out.set(nodeId, {
+      nodeId,
+      key: g.key || rec?.key || g.entryId,
+      evidence: knownWriter ? "CRACI lists the cache entry in this job's SBOM and names another job as its writer" : `CRACI lists the cache entry in this job's SBOM; job log: "Cache restored from key: ${g.key}"`,
+      record: rec,
+    });
+  }
+  const viaSbom = new Set([...out.values()].map((r) => r.key));
   for (const key of job.cache.restored) {
+    if (viaSbom.has(key)) continue;
     const candidates = mine
       .filter((c) => c.key === key && !selfMade(c) && (!end || !c.created_at || c.created_at <= end))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -251,7 +268,7 @@ export function buildGraph(input: GraphInput): Graph {
   const ociId = (kind: string, digest: string) => `${kind === "oci_blob" ? "blob" : "manifest"}:${digest}`;
   const tagIndex = new Map<string, Array<{ digest: string; at: string }>>();
   for (const a of artifacts) {
-    if (a.kind === "gha_cache") continue;
+    if (a.kind === "gha_cache" || a.unknown_to_craci) continue;
     const id = ociId(a.kind, a.digest);
     g.node({ id, type: a.kind === "oci_blob" ? "blob" : "manifest", label: a.digest.slice(0, 19), data: a });
     for (const cr of a.jobs_created_in ?? []) {
@@ -491,7 +508,10 @@ export async function ringFence(r: Rings, o: FenceOptions = {}): Promise<FenceRe
 
   for (const m of artifacts) {
     const cm = /^cache:(.+)#(\d+)$/.exec(m.id);
-    if (cm) {
+    if (cm && !Number.isSafeInteger(Number(cm[2]))) {
+      // An entry id of CRACI's cache store, not a GitHub cache id.
+      manual.push(`Cache "${m.label}" in ${cm[1]} is held by CRACI's cache store, which GitHub's API cannot delete from. Change the cache key in the workflow so no job restores it again.`);
+    } else if (cm) {
       actions.push({ type: "delete_cache", repo: cm[1]!, cacheId: Number(cm[2]), key: m.label, reason: m.why });
     } else if (m.type === "cache") {
       manual.push(`Cache with key "${m.label}" in ${m.repo ?? "?"} is not in GitHub's cache list any more; nothing to delete.`);
@@ -610,6 +630,20 @@ export function cacheLineageAlerts(g: Graph): LineageAlert[] {
   return out.sort((a, b) => a.reader.jobId.localeCompare(b.reader.jobId));
 }
 
+/**
+ * Is this image repository one of ours? Yes when one of our jobs pushed to it (seen in its trace), or
+ * when it sits under the GitHub organisation of a fleet repo on ghcr.io (ghcr.io/<org>/…).
+ */
+export function ourImageRepos(jobs: Iterable<FleetJob>): (registry: string, name: string) => boolean {
+  const pushed = new Set<string>();
+  const orgs = new Set<string>();
+  for (const j of jobs) {
+    orgs.add(j.repo.split("/")[0]!.toLowerCase());
+    for (const m of j.oci?.manifests ?? []) if (m.op === "push") pushed.add(`${m.registry}/${m.name}`);
+  }
+  return (registry, name) => pushed.has(`${registry}/${name}`) || (registry === "ghcr.io" && orgs.has(name.split("/")[0]!.toLowerCase()));
+}
+
 export type ImageAlert = {
   repo: string;
   jobId: string;
@@ -630,6 +664,7 @@ export function foreignImagePulls(input: GraphInput): ImageAlert[] {
   const artifacts = values<PreviewArtifactProvenance>(input.artifacts as any);
   const ourRepos = new Set<string>();
   const made = new Set<string>();
+  const asked = new Set(artifacts.map((a) => a.digest));
   const byTag = new Map<string, Array<{ digest: string; at: string }>>();
   for (const a of artifacts) {
     if (a.kind === "gha_cache" || a.kind === "oci_blob") continue;
@@ -642,20 +677,26 @@ export function foreignImagePulls(input: GraphInput): ImageAlert[] {
       (byTag.get(k) ?? byTag.set(k, []).get(k)!).push({ digest: a.digest, at: cr.accepted_at });
     }
   }
+  const isOurs = ourImageRepos(jobs);
   const out: ImageAlert[] = [];
   for (const j of jobs) {
     for (const m of j.oci?.manifests ?? []) {
       const repo = `${m.registry}/${m.name}`;
-      if (m.op !== "pull" || !m.digest || !ourRepos.has(repo) || made.has(m.digest)) continue;
-      const ours = (byTag.get(`${repo}:${m.ref}`) ?? []).sort((a, b) => b.at.localeCompare(a.at)).map((x) => x.digest);
+      // Only a digest CRACI was asked about can be called foreign: unknown stays unknown.
+      if (m.op !== "pull" || !m.digest || !(ourRepos.has(repo) || isOurs(m.registry, m.name)) || made.has(m.digest) || !asked.has(m.digest)) continue;
+      const byDigest = DIGEST.test(m.ref);
+      // Pulled by tag: what our jobs pushed under that tag. Pulled by digest: what our jobs pushed to that repository at all.
+      const pushed = byDigest ? [...byTag].filter(([k]) => k.startsWith(`${repo}:`)).flatMap(([, v]) => v) : (byTag.get(`${repo}:${m.ref}`) ?? []);
+      const ours = [...new Set(pushed.sort((a, b) => b.at.localeCompare(a.at)).map((x) => x.digest))];
+      const image = byDigest ? `${repo}@${m.digest.slice(0, 19)}…` : `${repo}:${m.ref}`;
       out.push({
         repo: j.repo,
         jobId: j.jobId,
         name: j.name,
-        image: `${repo}:${m.ref}`,
+        image,
         digest: m.digest,
         ours,
-        why: `Job "${j.name}" pulled ${repo}:${m.ref} and got ${m.digest.slice(0, 19)}…, which no job of ours produced${ours.length ? ` (ours pushed ${ours[0]!.slice(0, 19)}… under that tag)` : ""}.`,
+        why: `Job "${j.name}" pulled ${byDigest ? repo : image} and got ${m.digest.slice(0, 19)}…. CRACI knows no job of ours that produced those bytes${ours.length ? ` (the newest image our jobs pushed there is ${ours[0]!.slice(0, 19)}…)` : ""}.`,
       });
     }
   }

@@ -3,7 +3,7 @@
 // What it learns is written under <runs dir>/console/state/ for the snapshot builder.
 import { join } from "node:path";
 import type { CraciClient } from "../craci.ts";
-import { FleetIndex, syncFleet } from "../fleet.ts";
+import { FleetIndex, reindexStale, syncFleet } from "../fleet.ts";
 import { GithubError, type GhJob, type GhRun, type GithubClient } from "../github.ts";
 import { TWIN_JOB_PATTERNS } from "../rules.ts";
 import type { Verdict } from "../types.ts";
@@ -89,6 +89,8 @@ export async function syncOnce(o: SyncOptions): Promise<SyncResult> {
   const errors: string[] = [];
   const changed = new Set<string>();
   const index = await FleetIndex.load();
+  // Records made with older rules are rebuilt once from the CRACI answers already on disk.
+  if (mem.first) await reindexStale(index, o.craci).then((n) => n && log(`fleet index: ${n} records rebuilt with the current rules`), () => {});
 
   // 1. GitHub: the newest runs of every repo; jobs only for runs that moved since the last look.
   for (const repo of o.repos) {

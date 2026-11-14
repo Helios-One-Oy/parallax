@@ -117,6 +117,10 @@ export class GithubClient {
     return this.api<GhRun>("GET", `/repos/${assertRepo(repo)}/actions/runs/${assertId(runId)}`);
   }
 
+  async getJob(repo: string, jobId: string | number): Promise<GhJob> {
+    return this.api<GhJob>("GET", `/repos/${assertRepo(repo)}/actions/jobs/${assertId(jobId)}`);
+  }
+
   /** Newest first. `max` caps the number of runs returned. */
   async listRuns(
     repo: string,

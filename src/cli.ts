@@ -4,11 +4,12 @@ import { mkdir, readdir, readFile, writeFile, appendFile } from "node:fs/promise
 import { join } from "node:path";
 import { CraciClient } from "./craci.ts";
 import { diffTwinsDetailed, policySuggestion, type DiffDetail, type TwinInput } from "./diff.ts";
-import { buildFleetJob, FleetIndex, loadFleetRepos, syncFleet } from "./fleet.ts";
+import { detectContext, detectRun, withFindings } from "./detect.ts";
+import { buildFleetJob, FleetIndex, loadFleetRepos, reindexStale, syncCaches, syncFleet, unknownArtifact, type FleetJob } from "./fleet.ts";
 import { GithubClient, type GhJob, type GhRun } from "./github.ts";
-import { buildGraph, cacheLineageAlerts, foreignImagePulls, ringFence, rings } from "./graph.ts";
+import { buildGraph, cacheLineageAlerts, foreignImagePulls, ourImageRepos, ringFence, rings } from "./graph.ts";
 import { assertRepo, verdictsDir } from "./paths.ts";
-import { BUILD_STEP_PATTERN, DRESS_STEP_PATTERN, SETUP_STEP_PATTERN, TWIN_JOB_PATTERNS } from "./rules.ts";
+import { BUILD_STEP_PATTERN, DRESS_STEP_PATTERN, SETUP_STEP_PATTERN, MIN_EGRESS_RUNS, TWIN_JOB_PATTERNS, UNTRUSTED_EVENTS } from "./rules.ts";
 import type { JobRef, Verdict } from "./types.ts";
 
 type Args = { _: string[]; [k: string]: string | boolean | string[] };
@@ -50,13 +51,28 @@ const jobRef = (j: GhJob | undefined, fallbackName: string): JobRef =>
     ? { jobId: String(j.id), name: j.name, status: j.status === "completed" ? (j.conclusion ?? "completed") : j.status, url: j.html_url ?? "" }
     : { jobId: "", name: fallbackName, status: "missing", url: "" };
 
+const HEAD = {
+  pass: "✅ Passed: the twins behaved the same and no other detector found anything",
+  fail: "❌ Stopped",
+  inconclusive: "⚠️ Inconclusive: Parallax could not compare the twins",
+};
+const TWIN_HEAD = {
+  clean: "✅ Clean: both twins behaved the same",
+  divergent: "❌ Divergent: the twins did not behave the same",
+  inconclusive: "⚠️ Inconclusive: Parallax could not compare the twins",
+};
+const CHECK_STATE = { checked: "checked", too_little_history: "not judged", nothing_to_check: "nothing to check" };
+
 export function renderMarkdown(d: DiffDetail): string {
   const v = d.verdict;
   const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
-  const head = { clean: "✅ Clean: both twins behaved the same", divergent: "❌ Divergent: the twins did not behave the same", inconclusive: "⚠️ Inconclusive: Parallax could not compare the twins" }[v.status];
   const link = (j: JobRef) => (j.url ? `[${j.name}](${j.url})` : j.name);
   const out: string[] = [];
-  out.push(`## Parallax verdict`, "", `**${head}**`, "");
+  const findings = v.findings ?? [];
+  const result = v.result ?? (v.status === "clean" ? "pass" : v.status === "divergent" ? "fail" : "inconclusive");
+  out.push(`## Parallax verdict`, "");
+  if (v.result) out.push(`**${HEAD[result]}${result === "fail" ? `. Caught by: ${(v.caughtBy ?? []).join(", ")}` : ""}**`, "");
+  out.push(`${v.result ? "Twins: " : ""}**${TWIN_HEAD[v.status]}**`, "");
   out.push(`Run ${v.runId || "?"}${v.branch ? ` on \`${v.branch}\`` : ""}${v.commitSha ? ` at \`${v.commitSha.slice(0, 7)}\`` : ""}. Bare twin: ${link(v.twins.bare)} (${v.twins.bare.status}). Decoy twin: ${link(v.twins.decoy)} (${v.twins.decoy.status}).`, "");
   if (v.divergences.length) {
     out.push("| Side | What | Why |", "|---|---|---|");
@@ -67,15 +83,27 @@ export function renderMarkdown(d: DiffDetail): string {
   out.push(
     `Seen in both twins: ${v.stats.shared} (bare ${v.stats.bare}, decoy ${v.stats.decoy}). Ignored as noise: ${v.ignored.count}${v.ignored.rules.length ? ` (rules: ${v.ignored.rules.join(", ")})` : ""}.`,
   );
+  if (findings.length) {
+    out.push("", "### What the other detectors found", "", "| Detector | Job | What | Why | Stops the run | Would a CRACI network policy have blocked it |", "|---|---|---|---|---|---|");
+    for (const f of findings)
+      out.push(`| ${f.organ} | ${cell(f.jobName)} | \`${cell(f.key)}\` | ${cell(f.why)} | ${f.fails ? "yes" : "no, reported only"} | ${cell(f.policy ?? "No. No network rule tells this apart from normal traffic.")} |`);
+  }
+  if (v.checks?.length) {
+    out.push("", "### What was checked", "", "| Detector | State | |", "|---|---|---|");
+    for (const c of v.checks) out.push(`| ${c.organ} | ${CHECK_STATE[c.state]} | ${cell(c.note)} |`);
+  }
   if (d.notes.length) out.push("", ...d.notes.map((n) => `- ${n}`));
   return out.join("\n") + "\n";
 }
 
 function renderText(d: DiffDetail): string {
   const v = d.verdict;
-  const out = [`${v.status.toUpperCase()}  ${v.repo} run ${v.runId} ${v.branch} ${v.commitSha.slice(0, 7)}`];
+  const out = [`${(v.result ?? v.status).toUpperCase()}  ${v.repo} run ${v.runId} ${v.branch} ${v.commitSha.slice(0, 7)}${v.caughtBy?.length ? `  caught by: ${v.caughtBy.join(", ")}` : ""}`];
+  out.push(`  twins: ${v.status}`);
   for (const x of v.divergences) out.push(`  ${x.side.padEnd(10)} ${x.key}${x.novelInFleet ? "  [new in the fleet]" : ""}\n             ${x.why}`);
   out.push(`  shared ${v.stats.shared}, bare ${v.stats.bare}, decoy ${v.stats.decoy}, ignored ${v.ignored.count}${v.ignored.rules.length ? ` (${v.ignored.rules.join(", ")})` : ""}`);
+  for (const f of v.findings ?? []) out.push(`  ${f.organ}${f.fails ? "" : " (reported only)"}: ${f.key}  [${f.jobName}]\n             ${f.why}`);
+  for (const c of v.checks ?? []) out.push(`  check ${c.organ}: ${CHECK_STATE[c.state]}. ${c.note}`);
   for (const n of d.notes) out.push(`  note: ${n}`);
   return out.join("\n");
 }
@@ -108,9 +136,10 @@ async function cmdVerdict(a: Args): Promise<number> {
   // 1. the two twins
   let bare: GhJob | undefined;
   let decoy: GhJob | undefined;
+  let jobs: GhJob[] = [];
   const deadline = Date.now() + waitJobsMs;
   for (;;) {
-    const jobs = await gh.listJobs(repo, runId);
+    jobs = await gh.listJobs(repo, runId);
     bare = jobs.find((j) => TWIN_JOB_PATTERNS.bare.test(j.name));
     decoy = jobs.find((j) => TWIN_JOB_PATTERNS.decoy.test(j.name));
     if (bare?.status === "completed" && decoy?.status === "completed") break;
@@ -130,29 +159,50 @@ async function cmdVerdict(a: Args): Promise<number> {
   };
   const [tb, td] = await Promise.all([fetchTwin(bare, "build (bare)"), fetchTwin(decoy, "build (decoy)")]);
 
-  // 3. history: earlier bare runs of this repo, from the fleet index and, when that is short, from the API
+  // 3. every job of this run CRACI has a trace for, and the history of the repo
   const index = await FleetIndex.load().catch(() => new FleetIndex(null));
   const mem = new FleetIndex(null);
-  for (const j of index.jobs.values()) mem.jobs.set(`${j.repo}#${j.jobId}`, j);
+  for (const [k, j] of index.jobs) mem.jobs.set(k, j);
+  for (const [k, c] of index.caches) mem.caches.set(k, c);
+  for (const [k, x] of index.artifacts) mem.artifacts.set(k, x);
+  const put = (j: FleetJob) => mem.jobs.set(`${j.repo}#${j.jobId}`, j);
+  const logsOf = (id: string) => craci.getJobLogs(repo, id, { cache: true }).catch(() => "");
+  const mine: FleetJob[] = [];
+  for (const [gj, t] of [[bare, tb], [decoy, td]] as const) {
+    if (!gj || gj.status !== "completed") continue;
+    mine.push(buildFleetJob({ repo, job: gj, run, trace: t.trace ?? null, sbom: t.sbom ?? null, logs: t.trace ? await logsOf(String(gj.id)) : "" }));
+  }
+  for (const gj of jobs.filter((j) => j.status === "completed" && j !== bare && j !== decoy)) {
+    const trace = await craci.getNetworkTrace(repo, String(gj.id), { waitFor: 0 }).catch(() => null);
+    if (!trace) continue; // not a CRACI job (the verdict job itself), or nothing recorded
+    const sbom = await craci.getSbom(repo, String(gj.id), { waitFor: 0 }).catch(() => null);
+    mine.push(buildFleetJob({ repo, job: gj, run, trace, sbom, logs: await logsOf(String(gj.id)) }));
+  }
+  for (const j of mine) put(j);
+
   const cutoff = bare?.started_at ?? run?.created_at ?? new Date().toISOString();
   const earlierBare = () =>
     [...mem.jobs.values()]
       .filter((j) => j.repo === repo && j.hasTrace && j.runId !== runId && TWIN_JOB_PATTERNS.bare.test(j.name) && j.conclusion === "success" && j.startedAt < cutoff)
       .sort((x, y) => y.startedAt.localeCompare(x.startedAt))
       .slice(0, historyN);
-  if (historyN > 0 && earlierBare().length < historyN) {
+  if (historyN > 0) {
     try {
-      const runs = (await gh.listRuns(repo, { max: 40, status: "completed" })).filter((r) => String(r.id) !== runId && r.created_at < cutoff).slice(0, 15);
-      for (const r of runs) {
-        if (earlierBare().length >= historyN) break;
-        if ([...mem.jobs.values()].some((j) => j.repo === repo && j.runId === String(r.id) && TWIN_JOB_PATTERNS.bare.test(j.name))) continue;
-        for (const j of (await gh.listJobs(repo, r.id)).filter((x) => x.status === "completed" && (TWIN_JOB_PATTERNS.bare.test(x.name) || TWIN_JOB_PATTERNS.decoy.test(x.name)))) {
-          const trace = await craci.getNetworkTrace(repo, String(j.id), { waitFor: 0 });
-          if (!trace) continue;
-          const sbom = await craci.getSbom(repo, String(j.id), { waitFor: 0 });
-          const fj = buildFleetJob({ repo, job: j, run: r, trace, sbom });
-          mem.jobs.set(`${repo}#${fj.jobId}`, fj);
-        }
+      const runs = (await gh.listRuns(repo, { max: 40, status: "completed" })).filter((r) => String(r.id) !== runId && r.created_at < cutoff);
+      // The newest runs, and enough runs of merged code for "new egress" to have something to compare a pull request with.
+      const pick = new Set([...runs.slice(0, Math.max(historyN, 8)), ...runs.filter((r) => !UNTRUSTED_EVENTS.includes(r.event)).slice(0, 8)]);
+      const known = new Set([...mem.jobs.values()].filter((j) => j.repo === repo && j.hasTrace).map((j) => j.runId));
+      for (const r of pick) {
+        if (known.has(String(r.id))) continue;
+        const done = (await gh.listJobs(repo, r.id)).filter((x) => x.status === "completed");
+        await Promise.all(
+          done.map(async (j) => {
+            const trace = await craci.getNetworkTrace(repo, String(j.id), { waitFor: 0 });
+            if (!trace) return;
+            const sbom = await craci.getSbom(repo, String(j.id), { waitFor: 0 });
+            put(buildFleetJob({ repo, job: j, run: r, trace, sbom }));
+          }),
+        );
       }
     } catch (e) {
       say(`history not available: ${e instanceof Error ? e.message : String(e)}`);
@@ -160,27 +210,78 @@ async function cmdVerdict(a: Args): Promise<number> {
   }
   const bareRuns = earlierBare().map((j) => j.keys);
 
-  // 4. the diff
-  const detail = diffTwinsDetailed(tb, td, { bareRuns, fleet: mem.jobs.size > 0 ? mem : undefined });
-  if (mem.jobs.size === 0) detail.notes.push("No earlier jobs are known, so nothing is marked as new in the fleet.");
-  else detail.notes.push(`Compared against ${bareRuns.length} earlier bare run${bareRuns.length === 1 ? "" : "s"} of this repo.`);
-  const v = detail.verdict;
+  // 4. what CRACI knows about the caches and our own images these jobs touched
+  try {
+    for (const j of mine) await syncCaches(mem, craci, repo, j.ghaCaches ?? []);
+    const entries = new Set(mine.flatMap((j) => (j.ghaCaches ?? []).map((c) => c.entryId)));
+    for (const c of mem.caches.values()) {
+      if (c.repo !== repo || !entries.has(String(c.id))) continue;
+      for (const cr of c.provenance?.jobs_created_in ?? []) {
+        const wRepo = cr.provider.repository;
+        const wId = String(cr.provider.job_id);
+        if (mem.getJob(wRepo, wId)) continue;
+        // The job that wrote the cache: its run's event says whether anyone could have triggered it.
+        try {
+          const wj = await gh.getJob(wRepo, wId);
+          const wr = await gh.getRun(wRepo, wj.run_id);
+          put(buildFleetJob({ repo: wRepo, job: wj, run: wr, trace: null, sbom: null }));
+        } catch {
+          /* GitHub no longer has the writer's job: the restore is then not judged, and the check says so */
+        }
+      }
+    }
+    const ours = ourImageRepos(mem.jobs.values());
+    for (const j of mine)
+      for (const m of j.oci.manifests) {
+        if (m.op !== "pull" || !m.digest || !ours(m.registry, m.name) || mem.artifacts.has(m.digest)) continue;
+        const prov = await craci.getOciManifestProvenance(m.digest);
+        mem.artifacts.set(m.digest, prov ?? unknownArtifact(m.digest));
+      }
+  } catch (e) {
+    say(`cache or image provenance not available: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
-  // 5. output
+  // 5. the twin diff, then every other detector on the same jobs
+  const detail = diffTwinsDetailed(tb, td, { bareRuns, fleet: mem.jobs.size > mine.length ? mem : undefined });
+  if (mem.jobs.size <= mine.length) detail.notes.push("No earlier jobs are known, so nothing is marked as new in the fleet.");
+  else detail.notes.push(`Compared against ${bareRuns.length} earlier bare run${bareRuns.length === 1 ? "" : "s"} of this repo.`);
+  const v = withFindings(detail.verdict, detectRun(detectContext(mem), repo, runId));
+  const result = v.result ?? "inconclusive";
+
+  // 6. output
   const file = await writeVerdict(v);
+  const denyHosts = (v.findings ?? []).filter((f) => f.organ === "new egress").map((f) => f.host);
+  let policy: string | null = null;
+  if (result === "fail" && tb.trace && (v.divergences.length || denyHosts.length)) {
+    try {
+      policy = policySuggestion(v, v.status === "inconclusive" ? tb.trace : undefined, { denyHosts }).step;
+    } catch {
+      policy = null;
+    }
+  }
   if (a.json) console.log(JSON.stringify(v, null, 2));
   else {
     console.log(renderText(detail));
     if (file) console.error(`verdict written to ${file}`);
-    if (v.status === "divergent" && tb.trace) console.log("\nSuggested network policy:\n" + policySuggestion(v).step);
+    if (policy) console.log("\nSuggested network policy:\n" + policy);
   }
   const summary = str(a.summary) ?? process.env.GITHUB_STEP_SUMMARY;
   if (summary && (a.summary || process.env.GITHUB_ACTIONS)) {
     let md = renderMarkdown(detail);
-    if (v.status === "divergent" && tb.trace) md += `\n<details><summary>Network policy that keeps the clean build working and blocks the rest</summary>\n\n\`\`\`yaml\n${policySuggestion(v).step}\`\`\`\n\n</details>\n`;
+    if (policy) md += `\n<details><summary>Network policy that keeps the clean build working and blocks the rest</summary>\n\n\`\`\`yaml\n${policy}\`\`\`\n\n</details>\n`;
     await appendFile(summary, md).catch(() => {});
   }
-  return v.status === "clean" ? 0 : v.status === "divergent" ? 1 : 2;
+  if (process.env.GITHUB_OUTPUT && process.env.GITHUB_ACTIONS)
+    await appendFile(process.env.GITHUB_OUTPUT, `status=${v.status}\ncaught_by=${(v.caughtBy ?? []).join(", ")}\n`).catch(() => {});
+  return result === "pass" ? 0 : result === "fail" ? 1 : 2;
+}
+
+async function cmdReindex(a: Args): Promise<number> {
+  const index = await FleetIndex.load();
+  const n = await reindexStale(index, new CraciClient());
+  if (a.json) console.log(JSON.stringify({ rebuilt: n, jobs: index.jobs.size }));
+  else console.log(`${n} job records rebuilt from the stored CRACI answers; index holds ${index.jobs.size} jobs`);
+  return 0;
 }
 
 async function cmdSync(a: Args): Promise<number> {
@@ -292,7 +393,7 @@ async function cmdEgress(a: Args): Promise<number> {
     .sorted()
     .filter((j) => j.hasTrace && (!repo || j.repo === repo))
     .map((j) => ({ repo: j.repo, runId: j.runId, jobId: j.jobId, name: j.name, at: j.startedAt, ...index.newEgress(j) }))
-    .filter((r) => r.earlierJobs > 0 && r.hosts.length > 0);
+    .filter((r) => r.earlierRuns >= MIN_EGRESS_RUNS && r.hosts.length > 0);
   if (a.json) console.log(JSON.stringify(rows, null, 2));
   else if (!rows.length) console.log("no job contacted a host that earlier jobs of its repo had not");
   else for (const r of rows) console.log(`${r.at} ${r.repo} job ${r.jobId} "${r.name}": new hosts ${r.hosts.join(", ")}`);
@@ -319,8 +420,9 @@ async function cmdImages(a: Args): Promise<number> {
 
 const HELP = `Parallax
   bun src/cli.ts sync [--repo O/R] [--max-runs N] [--retry-missing]   index all finished jobs of the fleet
-  bun src/cli.ts verdict --repo O/R --run ID [--json]        diff the two twins of a run (exit 0 clean, 1 divergent, 2 inconclusive)
+  bun src/cli.ts verdict --repo O/R --run ID [--json]        judge a run: twin diff plus every other detector (exit 0 pass, 1 fail, 2 inconclusive)
           [--history N] [--wait SEC] [--wait-trace SEC] [--summary FILE]
+  bun src/cli.ts reindex                                     rebuild index records made with older rules, from stored CRACI answers
   bun src/cli.ts rings --seed <purl|host|sha256:…|job:ID>    contact tracing [--json] [--fence] [--execute]
   bun src/cli.ts drift [--all] [--json]                      URLs whose bytes changed between jobs
   bun src/cli.ts notfound [--json]                           registry names that did not exist
@@ -333,6 +435,7 @@ export async function main(argv: string[]): Promise<number> {
   switch (a._[0]) {
     case "sync": return cmdSync(a);
     case "verdict": return cmdVerdict(a);
+    case "reindex": return cmdReindex(a);
     case "rings": return cmdRings(a);
     case "drift": return cmdDrift(a);
     case "notfound": return cmdNotFound(a);

@@ -23,10 +23,10 @@ Harmless copies of real attacks, run in our demo repos. Every row on the Replays
 | Shai-Hulud npm worm (fires only with an npm token) | caught | twins | 53 s |
 | Nx s1ngularity (fires only on a release tag) | caught | twins | 51 s |
 | axios (calls a host no earlier run called) | caught | new egress | 55 s |
-| TanStack (release restores a cache a pull request wrote) | caught | cache provenance | 46 s |
+| TanStack (release restores a cache a pull request wrote) | caught | cache provenance | 52 s |
 | tj-actions (same URL, new content) | caught, after the run | response hash in the trace | 40 s |
 | KICS (base image tag moved) | caught | image provenance | 21 s |
-| Hallucinated package name | caught, after the run | registry 404 in the trace | 46 s |
+| Hallucinated package name | caught | registry 404 in the trace | 97 s |
 | Workflow deleted from GitHub after it ran | caught | CRACI still holds its 14 connections | |
 | Dormant payload (waits for a date) | missed | | |
 

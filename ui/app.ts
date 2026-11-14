@@ -613,7 +613,8 @@ function replaysHtml(s: State): string {
   const ran = s.replays.filter((r) => r.run).length;
   const caught = s.replays.filter((r) => r.state === "caught").length;
   const missed = s.replays.filter((r) => r.state === "missed").length;
-  const sum = ran ? `${caught} caught, ${missed} missed, ${s.replays.length - ran} not run or not seen yet.` : "None has run yet.";
+  const rest = s.replays.length - ran;
+  const sum = ran ? `${caught} caught, ${missed} missed${rest ? `, ${rest} not run or not seen yet` : ""}.` : "None has run yet.";
   return `<h1 class="plain">This year's real attacks, replayed on the fleet</h1>
     <p class="lead">Each replay is a harmless simulation of one real attack, run in a fleet repo. The row fills in from the real run: what Parallax saw, which detector caught it, how long it took from the push. A miss is shown as a miss. ${esc(sum)}</p>
     ${s.replays.length ? `<table class="board"><thead><tr><th>Attack and simulation</th><th>Result</th><th>Caught by</th><th>What Parallax saw</th><th>Push to verdict</th><th>Run and CRACI job</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">No replays are defined.</p>`}`;

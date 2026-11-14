@@ -81,11 +81,21 @@ Each replay is a pull request in a fleet repo. Scoreboard columns: incident, how
 | `log-wipe` | wfx-loot, 10–12 Nov 2026 | workflow posts to a raw IP then the run is deleted | CRACI trace survives off GitHub |
 | `slopsquat` | hallucinated package names, 2026 | install asks the registry for a name that does not exist | registry 404s pooled across the fleet |
 
+## What the first real runs taught us (14 Nov, evening)
+
+State: `Helios-One-Oy/parallax-demo-web` runs twins, verdict and release on every push and pull request; the console is live at https://parallax-console.fly.dev (the box pushes to it). Replays `shai-hulud` and `release-gate` are caught by the twins. `fresh-host` and `time-bomb` are not caught yet.
+
+- The CRACI API is closed to CRACI runners, so the verdict job is `runs-on: ubuntu-latest`. Everything else stays `runs-on: craci`.
+- Fleet workflows use the actions as `Helios-One-Oy/parallax/dress@v0` and `.../verdict@v0`. `main` moves all the time; a push that lands between the two twins makes them fetch different action code and the verdict (correctly) calls that divergent. After changing `dress/`, `verdict/` or `src/`: push `main`, then move the tag (`git tag -f v0 && git push -f origin v0`) only while no fleet run is queued or running.
+- CRACI runners set `LOG_LEVEL` themselves. Docker Hub answers 429 to CRACI's shared addresses; `public.ecr.aws` and `ghcr.io` refused anonymous pull tokens inside `docker build`; `mirror.gcr.io/library/*`, `quay.io` and `cgr.dev` work. `RUN npm ci` inside `docker build` got no usable network, so images copy what the runner built. Pushing to `ghcr.io/helios-one-oy/*` with `github.token` and `packages: write` works.
+- One twin's runner sometimes calls GitHub's `/_dns` endpoints at job start. The diff ignores what a twin did before its dress step started (`before-the-twins-differed`).
+- CRACI bills Helios One by the minute. Runner size "2" or smaller, no retry loops, cancel runs you do not need.
+
 ## Rules for everyone working here
 
 - No invented data: every number and row on screen comes from a real CRACI job or a real GitHub object. Unknown stays empty.
 - Secrets never printed or written into files. `hsec exec --only NAME -- cmd` for vault values.
 - `rm` only literal paths. Run output (traces, SBOMs, logs) goes to `/bulk3/runs/craci/`, not into the repos.
 - The box must stay light: no heavy local builds, no new Docker images (use plain local processes for tests).
-- Git: commit only the paths you own with `git add <paths>` (several agents share this checkout; retry if `index.lock` is busy). Do not push; the lead pushes. Commit author as configured; end commit messages with `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`.
+- Git: commit only the paths you own with `git add <paths>` (several agents share this checkout; retry if `index.lock` is busy). Push your own commits (`git pull --rebase` first; never force-push `main`). Commit author as configured; end commit messages with `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`.
 - Stack: Bun 1.4 + TypeScript, no framework unless needed. Plain words in all UI and docs text.

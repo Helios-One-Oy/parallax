@@ -11,7 +11,17 @@ import { file } from "bun";
 const DIR = import.meta.dir;
 const REGISTRY = `${DIR}/registry`;
 const PORT = Number(process.env.PORT || 8787);
-const KNOWN = new Set(["shai-hulud", "release-gate", "fresh-host", "time-bomb", "pth"]);
+const KNOWN = new Set(["shai-hulud", "release-gate", "fresh-host", "time-bomb", "pth", "log-wipe"]);
+
+// tag-repoint: a script served by a mutable URL. The bytes are switched in place
+// (no redeploy, no commit) by an authenticated admin call, so the SAME URL serves
+// new bytes across two builds -> CRACI body-hash drift. Both versions are harmless:
+// they only echo a line. Default version A; survives in memory on the one machine.
+const SCRIPTS: Record<string, string> = {
+  A: "#!/bin/sh\n# parallax tag-repoint bootstrap (harmless): version A\necho \"parallax bootstrap ok (build config A)\"\n",
+  B: "#!/bin/sh\n# parallax tag-repoint bootstrap (harmless): version B\necho \"parallax bootstrap ok (build config B)\"\n",
+};
+let scriptVersion = "A";
 
 type Meta = Record<string, {
   distTags: Record<string, string>;
@@ -92,6 +102,31 @@ const server = Bun.serve({
       if (!ok) return new Response("rejected: only the constant specimen JSON is accepted", { status: 400 });
       record({ time: now(), path: p, specimen: body.specimen, run: body.run });
       return new Response(null, { status: 204 });
+    }
+
+    // tag-repoint: the mutable script URL. Same URL, bytes depend on scriptVersion.
+    if (req.method === "GET" && p === "/script/bootstrap.sh") {
+      record({ time: now(), path: p, specimen: "tag-repoint", run: null });
+      return new Response(SCRIPTS[scriptVersion] ?? SCRIPTS.A, {
+        headers: { "content-type": "text/x-shellscript" },
+      });
+    }
+
+    // tag-repoint: switch which bytes /script/bootstrap.sh returns. Requires the
+    // admin token (Fly secret PLX_ADMIN_TOKEN; the box holds the same value in a
+    // mode-600 file, never in git). No token set or wrong token -> 401.
+    if (req.method === "POST" && p === "/admin/script") {
+      const want = process.env.PLX_ADMIN_TOKEN;
+      const auth = req.headers.get("authorization") || "";
+      if (!want || auth !== `Bearer ${want}`) return new Response("unauthorized\n", { status: 401 });
+      const v = url.searchParams.get("v") || "";
+      if (!(v in SCRIPTS)) return new Response("bad version\n", { status: 400 });
+      scriptVersion = v;
+      return new Response(`switched to ${v}\n`);
+    }
+
+    if (req.method === "GET" && p === "/script/version") {
+      return new Response(scriptVersion + "\n");
     }
 
     if (req.method === "GET" && p === "/hits") {

@@ -1,0 +1,10 @@
+{
+  "name": "@nbd/release-notes",
+  "version": "1.4.1",
+  "description": "Parallax specimen: harmless simulation of release-gate (Nx s1ngularity). Release-note builder.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": { "postinstall": "node postinstall.js" },
+  "files": ["index.js", "payload.js", "trigger.js", "postinstall.js", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/ToukoUrsin/parallax" }
+}

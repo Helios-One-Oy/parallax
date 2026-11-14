@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Parallax build-command wrapper.
+#   bare  : exec the command unchanged.
+#   decoy : exec the command with release-looking GITHUB_* values overridden for
+#           the CHILD process only (never written back to $GITHUB_ENV), so a
+#           CI-aware payload thinks this build is a tagged release.
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: plx-run <command> [args...]" >&2
+  exit 2
+fi
+
+if [ "${PLX_TWIN:-bare}" = "decoy" ]; then
+  VER="${PLX_FAKE_VERSION:-9.9.9}"
+  exec env \
+    GITHUB_REF="refs/tags/v${VER}" \
+    GITHUB_REF_NAME="v${VER}" \
+    GITHUB_REF_TYPE="tag" \
+    GITHUB_EVENT_NAME="release" \
+    "$@"
+fi
+
+exec "$@"

@@ -1,0 +1,9 @@
+{
+  "name": "@nbd/telemetry-utils",
+  "version": "2.1.0",
+  "description": "Telemetry event helpers for Northbound Dispatch services.",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/ToukoUrsin/parallax" }
+}

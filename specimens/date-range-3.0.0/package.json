@@ -1,0 +1,9 @@
+{
+  "name": "@nbd/date-range",
+  "version": "3.0.0",
+  "description": "UTC date-range helpers.",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/ToukoUrsin/parallax" }
+}

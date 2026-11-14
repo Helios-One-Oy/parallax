@@ -1,0 +1,12 @@
+name: "Parallax dress"
+description: "Dress a build twin as 'bare' or 'decoy'. The decoy twin carries fake release credentials so CI-aware malware reveals itself. Makes no network requests in either mode."
+inputs:
+  twin:
+    description: "Which twin to dress: 'bare' (passthrough) or 'decoy' (fake release credentials)."
+    required: true
+    default: "bare"
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: "${{ github.action_path }}/dress.sh '${{ inputs.twin }}'"

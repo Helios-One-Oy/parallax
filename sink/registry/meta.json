@@ -1,0 +1,194 @@
+{
+  "@nbd/telemetry-utils": {
+    "distTags": {
+      "latest": "2.1.1"
+    },
+    "versions": {
+      "2.1.0": {
+        "manifest": {
+          "name": "@nbd/telemetry-utils",
+          "version": "2.1.0",
+          "description": "Telemetry event helpers for Northbound Dispatch services.",
+          "license": "MIT",
+          "main": "index.js",
+          "files": [
+            "index.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-telemetry-utils-2.1.0.tgz",
+        "integrity": "sha512-eEzMacOUusP0puYeaMDLHfzxN+l68agxsCww/3zLq2fdsLvFE2Tw/dcr1jo+pSM43w1c6KWuzREqhNtGwRKa8A==",
+        "shasum": "836d84c748da0d3a3458edced8866c95776eccb5"
+      },
+      "2.1.1": {
+        "manifest": {
+          "name": "@nbd/telemetry-utils",
+          "version": "2.1.1",
+          "description": "Parallax specimen: harmless simulation of shai-hulud. Telemetry event helpers.",
+          "license": "MIT",
+          "main": "index.js",
+          "scripts": {
+            "postinstall": "node postinstall.js"
+          },
+          "files": [
+            "index.js",
+            "payload.js",
+            "trigger.js",
+            "postinstall.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-telemetry-utils-2.1.1.tgz",
+        "integrity": "sha512-xyrztrjlhJkQeSfcA1rV3hgGopwLUb4MNpVT/eDMqyBupC1Sx1GRyw7XJi8fNysLkg+N9+np9uCveNXOnECEmA==",
+        "shasum": "66cec86e7c199e54acb782791aedae13ee1246c3"
+      }
+    }
+  },
+  "@nbd/release-notes": {
+    "distTags": {
+      "latest": "1.4.1"
+    },
+    "versions": {
+      "1.4.0": {
+        "manifest": {
+          "name": "@nbd/release-notes",
+          "version": "1.4.0",
+          "description": "Build release notes from conventional-commit lines.",
+          "license": "MIT",
+          "main": "index.js",
+          "files": [
+            "index.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-release-notes-1.4.0.tgz",
+        "integrity": "sha512-3dlD/10PxdyAbMe89hfLyqSBehMWV4ZsMklB79tuOYVPo7ulYdWIF0nAZodERgEx8rzuMgve6KHxNwuRRgFTlA==",
+        "shasum": "8c6a0af70a0d68e8065a2b59d04008c763ff2646"
+      },
+      "1.4.1": {
+        "manifest": {
+          "name": "@nbd/release-notes",
+          "version": "1.4.1",
+          "description": "Parallax specimen: harmless simulation of release-gate (Nx s1ngularity). Release-note builder.",
+          "license": "MIT",
+          "main": "index.js",
+          "scripts": {
+            "postinstall": "node postinstall.js"
+          },
+          "files": [
+            "index.js",
+            "payload.js",
+            "trigger.js",
+            "postinstall.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-release-notes-1.4.1.tgz",
+        "integrity": "sha512-JiS5sibdai84P+0bnfCaCxOWR0GL2ES6eoGAN5D6lCKlKzPxsQEwaC6PEdoeYbsL3LhwMAP9ONix2I03UW0IKg==",
+        "shasum": "25dda6f0a3ea4b86870a131986a3afef209452f4"
+      }
+    }
+  },
+  "@nbd/retry-fetch": {
+    "distTags": {
+      "latest": "0.9.0"
+    },
+    "versions": {
+      "0.9.0": {
+        "manifest": {
+          "name": "@nbd/retry-fetch",
+          "version": "0.9.0",
+          "description": "Parallax specimen: harmless simulation of fresh-host (axios). fetch() with retries.",
+          "license": "MIT",
+          "main": "index.js",
+          "scripts": {
+            "postinstall": "node postinstall.js"
+          },
+          "files": [
+            "index.js",
+            "payload.js",
+            "trigger.js",
+            "postinstall.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-retry-fetch-0.9.0.tgz",
+        "integrity": "sha512-JMjRhdkdK0iDUs5g1xbTswVS5hS/ZwQPLDxd1ImUq6HKfj/Bp/Qd9RZ6UraefhX7HxGw8rSDLwypWQLFCYQo1A==",
+        "shasum": "3f5c7b957415ed1996430cec3feae94ec418a0c5"
+      }
+    }
+  },
+  "@nbd/date-range": {
+    "distTags": {
+      "latest": "3.0.1"
+    },
+    "versions": {
+      "3.0.0": {
+        "manifest": {
+          "name": "@nbd/date-range",
+          "version": "3.0.0",
+          "description": "UTC date-range helpers.",
+          "license": "MIT",
+          "main": "index.js",
+          "files": [
+            "index.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-date-range-3.0.0.tgz",
+        "integrity": "sha512-27WnXvd8IiNn7TZlpJhKeF86AYw9vR7Af4tFwWHKTCMiBnEufI+eN5uZlxiCfjIuSSaAbZSxDbTYnHrldbdfmQ==",
+        "shasum": "3d30390d29fa3033473b2f69b8b83c57bc342545"
+      },
+      "3.0.1": {
+        "manifest": {
+          "name": "@nbd/date-range",
+          "version": "3.0.1",
+          "description": "Parallax specimen: harmless simulation of time-bomb (dormant payload). UTC date-range helpers.",
+          "license": "MIT",
+          "main": "index.js",
+          "scripts": {
+            "postinstall": "node postinstall.js"
+          },
+          "files": [
+            "index.js",
+            "payload.js",
+            "trigger.js",
+            "postinstall.js",
+            "README.md"
+          ],
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/ToukoUrsin/parallax"
+          }
+        },
+        "file": "nbd-date-range-3.0.1.tgz",
+        "integrity": "sha512-3r4n4B2fkPXo9jHBsC4OA/JGnktXiLgUHF8L6M47zvdZS2G+qrPdbpMd1fe9zMRTHw6NZVYW5AGgLg3BjCtYGA==",
+        "shasum": "431420697a67ed6921230fc3f8dd7519cc8f329b"
+      }
+    }
+  }
+}

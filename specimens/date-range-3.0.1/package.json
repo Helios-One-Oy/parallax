@@ -1,0 +1,10 @@
+{
+  "name": "@nbd/date-range",
+  "version": "3.0.1",
+  "description": "Parallax specimen: harmless simulation of time-bomb (dormant payload). UTC date-range helpers.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": { "postinstall": "node postinstall.js" },
+  "files": ["index.js", "payload.js", "trigger.js", "postinstall.js", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/ToukoUrsin/parallax" }
+}

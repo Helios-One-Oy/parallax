@@ -1,0 +1,9 @@
+{
+  "name": "parallax-specimens",
+  "private": true,
+  "type": "commonjs",
+  "description": "Parallax specimens: harmless simulated malware packages and their unit tests. Not published.",
+  "scripts": {
+    "test": "node --test test/specimen.test.js"
+  }
+}

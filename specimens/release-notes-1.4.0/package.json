@@ -1,0 +1,9 @@
+{
+  "name": "@nbd/release-notes",
+  "version": "1.4.0",
+  "description": "Build release notes from conventional-commit lines.",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/ToukoUrsin/parallax" }
+}

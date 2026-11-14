@@ -53,6 +53,8 @@ const VERDICT_WORDS: Record<string, string> = { clean: "clean", divergent: "dive
 /** The twin verdict of a run, then one label per other detector that found something in it. */
 function runChip(r: RunRow): string {
   const others = (r.caughtBy ?? []).filter((o) => o !== "twins").map((o) => `<span class="chip organ">${esc(o)}</span>`).join("");
+  // "clean" beside a detector's name reads as a contradiction: the twins agreed, something else caught the run.
+  if (r.verdict === "clean" && others) return `${others}<span class="chip none">twins agree</span>`;
   if (r.verdict) return `<span class="chip ${r.verdict}">${VERDICT_WORDS[r.verdict]}</span>${others}`;
   if (r.live || (r.status && r.status !== "completed")) return `<span class="chip running">running</span>${others}`;
   if (others) return others;
@@ -110,8 +112,8 @@ function paintFresh() {
 
 // ---------- fleet ----------
 
-function runRow(r: RunRow): string {
-  const meta = [r.branch, r.sha ? short(r.sha) : "", r.event.replace(/_/g, " "), r.pr ? `PR #${r.pr.number}` : "", r.gone ? "deleted on GitHub" : ""].filter(Boolean).join(" · ");
+function runRow(r: RunRow, withRepo = false): string {
+  const meta = [withRepo ? r.repo.split("/")[1] : "", r.branch, r.sha ? short(r.sha) : "", r.event.replace(/_/g, " "), r.pr ? `PR #${r.pr.number}` : "", r.gone ? "deleted on GitHub" : ""].filter(Boolean).join(" · ");
   const inner = `<span class="chips">${runChip(r)}</span>
     <span class="what"><span class="title">${esc(r.title || r.workflow || `Run ${r.runId}`)}</span><span class="meta">${esc(meta)}</span></span>
     <span class="when">${esc(ago(r.startedAt))}</span>`;
@@ -148,13 +150,29 @@ function fleetHtml(s: State): string {
       (r) => `<div class="repo">
         <h3>${ext(r.url, r.repo)} <span class="n">${r.totalRuns ? plural(r.totalRuns, "run") : ""}</span></h3>
         ${r.error ? `<p class="hint err">GitHub could not be read for this repo: ${esc(r.error.slice(0, 160))}</p>` : ""}
-        ${r.runs.length ? `<ul class="rows">${r.runs.map(runRow).join("")}</ul>` : `<p class="empty">No runs yet.</p>`}
+        ${r.runs.length ? `<ul class="rows">${r.runs.map((x) => runRow(x)).join("")}</ul>` : `<p class="empty">No runs yet.</p>`}
       </div>`,
     )
     .join("");
 
-  const egress = a.egress.map((e) => `<li><span class="mono">${esc(e.hosts.join(", "))}</span><br><span class="meta">${esc(e.repo)} · job "${esc(e.name)}" · ${runLink(e.repo, e.runId)} · <a href="${esc(ringsHref(e.hosts[0]!))}">trace it</a></span></li>`);
-  const lineage = a.lineage.map((e) => `<li>${esc(e.why)}<br><span class="meta">${runLink(e.repo, e.runId)} · <a href="${esc(ringsHref(e.seed))}">trace the cache</a></span></li>`);
+  // The same host or cache in several jobs and runs is one line; the list is newest first, so the first one stands for the group.
+  const group = <T,>(list: T[], key: (x: T) => string): T[][] => {
+    const m = new Map<string, T[]>();
+    for (const x of list) m.set(key(x), [...(m.get(key(x)) ?? []), x]);
+    return [...m.values()];
+  };
+  const across = (g: Array<{ runId: string }>) => {
+    const runs = new Set(g.map((x) => x.runId)).size;
+    return g.length > 1 ? `${plural(g.length, "job")} in ${plural(runs, "run")}` : "";
+  };
+  const egress = group(a.egress, (e) => `${e.repo}\n${e.hosts.join()}`).map((g) => {
+    const e = g[0]!;
+    return `<li><span class="mono">${esc(e.hosts.join(", "))}</span><br><span class="meta">${[esc(e.repo), g.length > 1 ? across(g) : `job "${esc(e.name)}"`, runLink(e.repo, e.runId), `<a href="${esc(ringsHref(e.hosts[0]!))}">trace it</a>`].join(" · ")}</span></li>`;
+  });
+  const lineage = group(a.lineage, (e) => `${e.repo}\n${e.cacheKey}`).map((g) => {
+    const e = g[0]!;
+    return `<li>${esc(e.why)}<br><span class="meta">${[across(g), runLink(e.repo, e.runId), `<a href="${esc(ringsHref(e.seed))}">trace the cache</a>`].filter(Boolean).join(" · ")}</span></li>`;
+  });
   const drift = a.drift.map((d) => {
     const last = d.versions[d.versions.length - 1]!;
     return `<li><span class="mono">${esc(d.url)}</span><br><span class="meta">${d.versions.length} different contents; the newest (${esc(last.sha256.slice(0, 12))}…) first seen in ${runLink(last.repo, last.runId)} · <a href="${esc(ringsHref(`sha256:${last.sha256}`))}">trace these bytes</a></span></li>`;
@@ -175,6 +193,16 @@ function fleetHtml(s: State): string {
       <div class="wire"></div>
       <div class="node gate"><b>Release job</b><span>starts only if the twins agree</span></div>
     </div>
+
+    ${
+      f.stopped?.length
+        ? `<section aria-labelledby="h-stopped">
+      <h2 id="h-stopped">Caught <span class="n">${f.stopped.length}</span></h2>
+      <p class="hint">Runs a detector failed, the twins first. Open one to see what gave it away.</p>
+      <ul class="rows">${f.stopped.map((r) => runRow(r, true)).join("")}</ul>
+    </section>`
+        : ""
+    }
 
     <section aria-labelledby="h-now">
       <h2 id="h-now">Running on CRACI now <span class="n">${f.active.length || ""}</span></h2>
@@ -245,8 +273,15 @@ function verdictHtml(v: RunPayload): string {
   const x = v.verdict;
   const running = !!(v.twins.bare?.running || v.twins.decoy?.running);
   if (!x) {
+    const kept = (v.solo ?? []).reduce((n, j) => n + j.keys.length, 0);
+    if (!running && !v.run.hasTwins && kept) {
+      const text = v.run.gone
+        ? `GitHub no longer has this run. CRACI still holds the ${plural(kept, "connection")} it made.`
+        : `This run has no twin jobs, so there is no verdict. CRACI recorded the ${plural(kept, "connection")} it made.`;
+      return `<div class="verdict"><span class="chip ${v.run.gone ? "caught" : "none"}">${v.run.gone ? "kept by CRACI" : "no twins"}</span><div><p>${esc(text)}</p><p class="sub">They are listed below.</p></div></div>`;
+    }
     const text = running ? "The twins are running. The verdict comes when both have finished." : v.run.hasTwins ? "No verdict yet for this run." : "This run has no twin jobs, so there is no verdict.";
-    return `<div class="verdict"><span class="chip ${running ? "running" : "none"}">${running ? "running" : "no verdict yet"}</span><div><p>${esc(text)}</p></div></div>`;
+    return `<div class="verdict"><span class="chip ${running ? "running" : "none"}">${running ? "running" : v.run.hasTwins ? "no verdict yet" : "no twins"}</span><div><p>${esc(text)}</p></div></div>`;
   }
   const n = x.divergences.length;
   const head =
@@ -318,6 +353,10 @@ function runHtml(v: RunPayload): string {
         <ol>${v.rows.map(connRow).join("")}</ol>
       </div>
       <p class="after">In the order CRACI recorded them. Repeats are folded into one line. ${div ? "Red lines are what only one twin did." : ""}</p>`;
+  } else if (v.solo?.length) {
+    table = v.solo
+      .map((j) => `<h3 class="solo">Job "${esc(j.name)}" <span class="n">${plural(j.keys.length, "connection")}</span></h3><ol class="solo">${j.keys.map((k) => `<li class="mono">${esc(k)}</li>`).join("")}</ol>`)
+      .join("") + `<p class="after">From CRACI's network trace of the job${v.run.gone ? ", which outlives the run on GitHub" : ""}.</p>`;
   } else if (v.verdict) {
     const miss = [!v.sides.bare?.hasTrace ? "bare" : "", !v.sides.decoy?.hasTrace ? "decoy" : ""].filter(Boolean);
     table = `<p class="empty">${miss.length ? `CRACI has no network trace for the ${miss.join(" and ")} twin.` : "The traces hold no connections."}</p>`;
@@ -338,9 +377,9 @@ function runHtml(v: RunPayload): string {
     <h1 class="plain">${esc(r.title || `Run ${r.runId}`)}</h1>
     <p class="lead meta">${meta}</p>
     <div id="run-verdict">${verdictHtml(v)}</div>
-    <div id="run-pipe">${pipeHtml(v)}</div>
+    <div id="run-pipe">${v.solo?.length ? "" : pipeHtml(v)}</div>
     <div id="run-find">${findingsHtml(v)}</div>
-    <section aria-labelledby="h-conn"><h2 id="h-conn">Connections of the two twins ${div ? `<span class="n">${plural(div, "divergent line")}</span>` : ""}</h2><div id="run-conn">${table}</div></section>
+    <section aria-labelledby="h-conn"><h2 id="h-conn">${v.solo?.length ? "Connections CRACI recorded" : "Connections of the two twins"} ${div ? `<span class="n">${plural(div, "divergent line")}</span>` : ""}</h2><div id="run-conn">${table}</div></section>
     <div id="run-pkgs">${pkgs}</div>
     <section aria-labelledby="h-logs"><h2 id="h-logs">Job logs</h2><div class="logs" id="run-logs"></div></section>
     <div id="run-seeds">${seeds}</div>`;
@@ -614,8 +653,11 @@ function replaysHtml(s: State): string {
   const caught = s.replays.filter((r) => r.state === "caught").length;
   const missed = s.replays.filter((r) => r.state === "missed").length;
   const rest = s.replays.length - ran;
-  const sum = ran ? `${caught} caught, ${missed} missed${rest ? `, ${rest} not run or not seen yet` : ""}.` : "None has run yet.";
-  return `<h1 class="plain">This year's real attacks, replayed on the fleet</h1>
+  const inTime = s.replays.filter((r) => r.state === "caught" && r.stopped).length;
+  const sum = ran
+    ? `${caught} caught, ${missed} missed${rest ? `, ${rest} not run or not seen yet` : ""}.${inTime && inTime < caught ? ` ${inTime} of the ${caught} were stopped in their own run, before the release job.` : ""}`
+    : "None has run yet.";
+  return `<h1 class="plain">Real attacks, replayed on the fleet</h1>
     <p class="lead">Each replay is a harmless simulation of one real attack, run in a fleet repo. The row fills in from the real run: what Parallax saw, which detector caught it, how long it took from the push. A miss is shown as a miss. ${esc(sum)}</p>
     ${s.replays.length ? `<table class="board"><thead><tr><th>Attack and simulation</th><th>Result</th><th>Caught by</th><th>What Parallax saw</th><th>Push to verdict</th><th>Run and CRACI job</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">No replays are defined.</p>`}`;
 }

@@ -106,16 +106,25 @@ export function createApp(o: AppOptions) {
 
   // ---------- running jobs, live from CRACI when a token is at hand ----------
   let live: { at: number; iso: string; jobs: JobSummary[] } | null = null;
+  let liveAsked = 0;
+  let liveAsking: Promise<void> | null = null;
   async function liveActive(): Promise<{ jobs: JobSummary[]; at: string } | null> {
     if (!o.craci) return null;
-    if (live && now() - live.at < 5000) return { jobs: live.jobs, at: live.iso };
-    try {
-      const { jobs } = await o.craci.listActiveJobs();
-      live = { at: now(), iso: new Date(now()).toISOString(), jobs: jobs ?? [] };
-      return { jobs: live.jobs, at: live.iso };
-    } catch {
-      return live ? { jobs: live.jobs, at: live.iso } : null;
+    // One call to CRACI every 5 s at most, however many pages are open and whether or not it answered.
+    if (now() - liveAsked >= 5000) {
+      liveAsking ??= o.craci
+        .listActiveJobs()
+        .then(({ jobs }) => {
+          live = { at: now(), iso: new Date(now()).toISOString(), jobs: jobs ?? [] };
+        })
+        .catch(() => {})
+        .finally(() => {
+          liveAsked = now();
+          liveAsking = null;
+        });
+      await liveAsking;
     }
+    return live ? { jobs: live.jobs, at: live.iso } : null;
   }
 
   // ---------- helpers ----------
@@ -265,6 +274,15 @@ export function createApp(o: AppOptions) {
       if (bad) return problem(422, `Not a snapshot: ${bad}.`);
       if (b.snapshot.fixture && !fixture) return problem(422, "Fixture data is not accepted here.");
       snap = b.snapshot as Snapshot;
+      // Work the views out once, now, so that no page has to wait for them.
+      const fresh = snap;
+      setTimeout(() => {
+        try {
+          fleetView(fresh);
+        } catch (e) {
+          console.error(`warm: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }, 0);
       const keep = new Set(snap.logs);
       for (const k of [...logs.keys()])
         if (!keep.has(k)) {

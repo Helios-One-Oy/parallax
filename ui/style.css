@@ -298,3 +298,9 @@ a.run:hover { background: var(--panel); }
 .chip.fix-not_measured, .chip.fix-proposed, .chip.fix-no-change, .chip.fix-nothing-to-fix { border-style: dashed; color: var(--ink-2); }
 .chip.fix-partly-proven { border-color: var(--ink); color: var(--ink); }
 @media (max-width: 760px) { .fix-body { grid-template-columns: 1fr; } .fix-adv > li { grid-template-columns: 1fr; } }
+
+/* a run without twins: its connections, as CRACI recorded them */
+h3.solo { font-size: 0.9375rem; font-weight: 600; margin: 16px 0 6px; }
+h3.solo .n { font-weight: 400; color: var(--ink-3); margin-left: 6px; }
+ol.solo { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+ol.solo > li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 0.8125rem; overflow-wrap: anywhere; }

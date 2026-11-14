@@ -338,10 +338,17 @@ export class FleetIndex implements FleetLookup {
 /** Did this job touch the host only through the runner's own "does GitHub resolve" check (rules.RUNNER_CHECK)? */
 function onlyRunnerCheck(j: FleetJob, h: string): boolean {
   if (!RUNNER_CHECK.host.test(h)) return false;
-  const check = `http GET ${h}${RUNNER_CHECK.path}`;
-  const mine = j.keys.filter((k) => k.split(" ").some((part) => part === h || part.startsWith(`${h}/`) || part.startsWith(`${h}:`)));
-  return mine.includes(check) && mine.every((k) => k === check || k.startsWith("dns "));
+  // newEgress asks this for every earlier job of every job: the answer for one job and host never changes.
+  const memo = runnerChecks.get(j) ?? runnerChecks.set(j, new Map()).get(j)!;
+  let is = memo.get(h);
+  if (is === undefined) {
+    const check = `http GET ${h}${RUNNER_CHECK.path}`;
+    const mine = j.keys.filter((k) => k.split(" ").some((part) => part === h || part.startsWith(`${h}/`) || part.startsWith(`${h}:`)));
+    memo.set(h, (is = mine.includes(check) && mine.every((k) => k === check || k.startsWith("dns "))));
+  }
+  return is;
 }
+const runnerChecks = new WeakMap<FleetJob, Map<string, boolean>>();
 
 function seen(j: FleetJob): Seen {
   return { at: j.startedAt, repo: j.repo, runId: j.runId, jobId: j.jobId, name: j.name };

@@ -174,13 +174,25 @@ export type FleetView = {
   generatedAt: string | null;
   fixture: boolean;
   repos: Array<{ repo: string; url: string; runs: RunRow[]; totalRuns: number; error: string | null }>;
+  /** Runs a detector failed, the twin diff first, one per branch and cause. */
+  stopped: RunRow[];
   active: ActiveRow[];
   activeAt: string | null;
   alerts: Alerts;
   counts: { jobs: number; traced: number; caches: number; images: number; verdicts: number };
 };
 
+const alertsCache = new WeakMap<Snapshot, Alerts>();
+
 export function alertsOf(s: Snapshot): Alerts {
+  const hit = alertsCache.get(s);
+  if (hit) return hit;
+  const made = buildAlerts(s);
+  alertsCache.set(s, made);
+  return made;
+}
+
+function buildAlerts(s: Snapshot): Alerts {
   const { index, graph } = coreOf(s);
   const traced = index.sorted().filter((j) => j.hasTrace);
   const egress = traced
@@ -238,6 +250,12 @@ export function activeOf(s: Snapshot, live?: JobSummary[] | null): ActiveRow[] {
 
 export function fleetView(s: Snapshot, o: { runsPerRepo?: number; live?: JobSummary[] | null; liveAt?: string | null } = {}): FleetView {
   const all = [...runsOf(s).values()];
+  const stopped = new Map<string, RunRow>();
+  for (const r of all.filter((x) => x.result === "fail").sort(newestFirst)) {
+    const k = [r.repo, r.branch, r.verdict === "divergent", r.caughtBy.join()].join("\n");
+    if (!stopped.has(k)) stopped.set(k, r);
+  }
+  const twinsFirst = (a: RunRow, b: RunRow) => Number(b.verdict === "divergent") - Number(a.verdict === "divergent") || newestFirst(a, b);
   return {
     generatedAt: s.generatedAt || null,
     fixture: s.fixture,
@@ -251,6 +269,7 @@ export function fleetView(s: Snapshot, o: { runsPerRepo?: number; live?: JobSumm
         error: s.github.repos[repo]?.error ?? null,
       };
     }),
+    stopped: [...stopped.values()].sort(twinsFirst).slice(0, 8),
     active: activeOf(s, o.live),
     activeAt: o.live ? (o.liveAt ?? null) : s.activeAt,
     alerts: alertsOf(s),
@@ -304,6 +323,8 @@ export type RunView = {
   jobs: GhJobLite[];
   gate: Gate;
   seeds: Seed[];
+  /** A run without twins: what CRACI recorded for each of its jobs. */
+  solo: Array<{ jobId: string; name: string; keys: string[] }>;
 };
 
 export type Seed = { seed: string; label: string; kind: "package" | "host" | "bytes" | "cache" };
@@ -478,11 +499,14 @@ export function runView(s: Snapshot, repo: string, runId: string): RunView | nul
   };
   const detection = detectionOf(s, repo, runId);
   const side = (x: TwinDetail["bare"] | undefined) => (x ? { hasTrace: x.hasTrace, observations: x.observations, noise: x.noise } : null);
+  const rows = mergeRows(verdict, detail);
+  const solo = rows.length || run.hasTwins ? [] : s.jobs.filter((j) => j.repo === repo && j.runId === runId && j.hasTrace).map((j) => ({ jobId: j.jobId, name: j.name, keys: j.keys }));
   return {
     run,
     verdict,
     twins: { bare: twinJob("bare"), decoy: twinJob("decoy") },
-    rows: mergeRows(verdict, detail),
+    rows,
+    solo,
     sides: { bare: side(detail?.bare), decoy: side(detail?.decoy) },
     packages: (verdict?.divergences ?? []).filter((d) => d.kind === "package"),
     findings: detection.findings,

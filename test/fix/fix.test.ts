@@ -337,6 +337,15 @@ describe("a fix that has to prove itself", () => {
     expect(renderProof(r)).toContain("- @scope/runner 2.1.12: [GHSA-bbbb-bbbb-bbbb]");
   });
 
+  test("verify: proven for some when the rest is still there and nothing else is wrong", async () => {
+    const f = await fake({ agentWrites: goodFix, after: bom([["GHSA-bbbb-bbbb-bbbb", "high", "pkg:npm/%40scope/runner@2.1.12"]]) });
+    await proposeFix({ repo: "acme/web" }, f.deps);
+    const r = await verifyFix({ repo: "acme/web", pr: 7 }, f.deps);
+    expect(r.status).toBe("partly-proven");
+    expect(renderProof(r)).toStartWith("**Proven for 1 of 2.** Those are gone from the build and the twins found nothing. 1 is still in it.");
+    expect(renderProof(r)).not.toContain("Why not:");
+  });
+
   test("the texts say where the numbers come from", () => {
     const brief = buildBrief({
       repo: "acme/web",

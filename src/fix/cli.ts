@@ -57,7 +57,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "verify" && repo && typeof a.pr === "string") {
     const r = await verifyFix({ repo, pr: Number(a.pr), comment: a["no-comment"] !== true }, deps);
     console.log(line(r));
-    return r.status === "proven" ? 0 : 1;
+    return r.status === "proven" || r.status === "partly-proven" ? 0 : 1;
   }
   console.error("usage: fix propose --repo O/R [--scope high|all] [--craci-prompt FILE] [--dry-run] | fix publish --id ID | fix verify --repo O/R --pr N | fix list");
   return 2;

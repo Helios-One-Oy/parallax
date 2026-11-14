@@ -33,7 +33,7 @@ export type Proof = {
   after: Record<Severity, number>;
 };
 
-export type FixStatus = "nothing-to-fix" | "agent-failed" | "no-change" | "refused" | "proposed" | "proven" | "not-proven";
+export type FixStatus = "nothing-to-fix" | "agent-failed" | "no-change" | "refused" | "proposed" | "proven" | "partly-proven" | "not-proven";
 
 export type FixRecord = {
   id: string;
@@ -235,10 +235,13 @@ export function renderProof(r: FixRecord): string {
   const targeted = new Set(r.targeted.map((t) => `${t.id} ${t.package}`));
   const hit = p.cleared.filter((a) => targeted.has(`${a.id} ${a.package}`));
   const missed = p.remaining.filter((a) => targeted.has(`${a.id} ${a.package}`));
+  const twinsLine = p.twins === "clean" ? " and the twins found nothing" : "";
   const headline =
     r.status === "proven"
-      ? `**Proven.** ${hit.length} of ${r.targeted.length} targeted advisories are gone from the build, and the twins found nothing.`
-      : `**Not proven.** ${hit.length} of ${r.targeted.length} targeted advisories are gone from the build.`;
+      ? `**Proven.** ${hit.length} of ${r.targeted.length} targeted advisories are gone from the build${twinsLine}.`
+      : r.status === "partly-proven"
+        ? `**Proven for ${hit.length} of ${r.targeted.length}.** Those are gone from the build${twinsLine}. ${missed.length} ${missed.length === 1 ? "is" : "are"} still in it.`
+        : `**Not proven.** ${hit.length} of ${r.targeted.length} targeted advisories are gone from the build.`;
   lines.push(
     headline,
     "",
@@ -251,25 +254,31 @@ export function renderProof(r: FixRecord): string {
     `- Twins: ${p.twins === "clean" ? "both builds made the same connections" : p.twins === "blocked" ? "the verdict blocked this build" : "no verdict for this run"}`,
     ...Object.entries(p.jobs).map(([name, c]) => `- ${name}: ${c ?? "not finished"}`),
   );
-  if (r.why.length) lines.push("", ...r.why.map((w) => `- ${w}`));
+  if (r.status === "not-proven" && r.why.length) lines.push("", "Why not:", ...r.why.map((w) => `- ${w}`));
   if (missed.length) lines.push("", "Still in the build:", ...missed.map((a) => `- ${a.package} ${a.version}: [${a.id}](${a.url}) (${a.severity})`));
   if (p.introduced.length) lines.push("", "New with this change:", ...p.introduced.map((a) => `- ${a.package} ${a.version}: [${a.id}](${a.url}) (${a.severity})`));
   return lines.join("\n");
 }
 
-/** proven = every targeted advisory is gone, nothing as bad came in, the build passed and the twins agree. */
-export function judgeProof(r: FixRecord, p: Proof): { status: "proven" | "not-proven"; why: string[] } {
+/**
+ * proven = every targeted advisory is gone, nothing as bad came in, the build passed and the twins agree.
+ * partly-proven = the same, but some targeted advisories are still in the build (and at least one is gone).
+ */
+export function judgeProof(r: FixRecord, p: Proof): { status: "proven" | "partly-proven" | "not-proven"; why: string[] } {
   const why: string[] = [];
   const targeted = new Set(r.targeted.map((t) => `${t.id} ${t.package}`));
   const missed = p.remaining.filter((a) => targeted.has(`${a.id} ${a.package}`));
-  if (missed.length) why.push(`${missed.length} targeted ${missed.length === 1 ? "advisory is" : "advisories are"} still in the build.`);
   const bad = p.introduced.filter((a) => a.severity === "critical" || a.severity === "high");
   if (bad.length) why.push(`The change brings in ${bad.length} new critical or high ${bad.length === 1 ? "advisory" : "advisories"}.`);
   if (p.twins === "blocked") why.push("The twins did not agree.");
   if (p.twins === null) why.push("There is no twin verdict for this run.");
   const failed = Object.entries(p.jobs).filter(([, c]) => c !== "success" && c !== "skipped");
   if (failed.length) why.push(`Jobs that did not pass: ${failed.map(([n, c]) => `${n} (${c ?? "not finished"})`).join(", ")}.`);
-  return { status: why.length ? "not-proven" : "proven", why };
+  const sound = why.length === 0;
+  if (missed.length) why.unshift(`${missed.length} targeted ${missed.length === 1 ? "advisory is" : "advisories are"} still in the build.`);
+  if (sound && !missed.length) return { status: "proven", why };
+  if (sound && missed.length < r.targeted.length) return { status: "partly-proven", why };
+  return { status: "not-proven", why };
 }
 
 export { countBySeverity };

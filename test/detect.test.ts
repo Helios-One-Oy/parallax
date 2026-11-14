@@ -217,5 +217,14 @@ describe("registry 404 and image provenance", () => {
     await index.addArtifact(unknownArtifact(`sha256:${moved}`));
     const d = detectRun(detectContext(index), REPO, "9");
     expect(d.findings.map((f) => [f.organ, f.key, f.fails])).toEqual([["image provenance", "ghcr.io/test-org/base:22", true]]);
+
+    // Docker asks for the tag (HEAD) and then fetches the same manifest by digest: still one finding, named by the tag
+    // (real job 132531355839 in parallax-demo-base showed up twice).
+    const byDigest = httpObs(`https://ghcr.io/v2/test-org/base/manifests/sha256:${moved}`, { bodyHash: { sha256: moved } });
+    for (const order of [[pull, byDigest], [byDigest, pull]]) {
+      const twice = await fleet([...history([before]), { id: 91, run: 9, minute: 60, obs: [...npmBuild(), ...order] }]);
+      await twice.addArtifact(unknownArtifact(`sha256:${moved}`));
+      expect(detectRun(detectContext(twice), REPO, "9").findings.map((f) => f.key)).toEqual(["ghcr.io/test-org/base:22"]);
+    }
   });
 });

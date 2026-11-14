@@ -680,6 +680,14 @@ export function foreignImagePulls(input: GraphInput): ImageAlert[] {
   const isOurs = ourImageRepos(jobs);
   const out: ImageAlert[] = [];
   for (const j of jobs) {
+    // Docker asks for the tag (HEAD) and then fetches the manifest by digest: one pull, one row per job and
+    // digest, and the row that names the tag is the one kept.
+    const mine = new Map<string, { alert: ImageAlert; byDigest: boolean }>();
+    const keep = (repo: string, alert: ImageAlert, byDigest: boolean) => {
+      const k = `${repo}\n${alert.digest}`;
+      const had = mine.get(k);
+      if (!had || (had.byDigest && !byDigest)) mine.set(k, { alert, byDigest });
+    };
     for (const m of j.oci?.manifests ?? []) {
       const repo = `${m.registry}/${m.name}`;
       // Only a digest CRACI was asked about can be called foreign: unknown stays unknown.
@@ -689,16 +697,21 @@ export function foreignImagePulls(input: GraphInput): ImageAlert[] {
       const pushed = byDigest ? [...byTag].filter(([k]) => k.startsWith(`${repo}:`)).flatMap(([, v]) => v) : (byTag.get(`${repo}:${m.ref}`) ?? []);
       const ours = [...new Set(pushed.sort((a, b) => b.at.localeCompare(a.at)).map((x) => x.digest))];
       const image = byDigest ? `${repo}@${m.digest.slice(0, 19)}…` : `${repo}:${m.ref}`;
-      out.push({
-        repo: j.repo,
-        jobId: j.jobId,
-        name: j.name,
-        image,
-        digest: m.digest,
-        ours,
-        why: `Job "${j.name}" pulled ${byDigest ? repo : image} and got ${m.digest.slice(0, 19)}…. CRACI knows no job of ours that produced those bytes${ours.length ? ` (the newest image our jobs pushed there is ${ours[0]!.slice(0, 19)}…)` : ""}.`,
-      });
+      keep(
+        repo,
+        {
+          repo: j.repo,
+          jobId: j.jobId,
+          name: j.name,
+          image,
+          digest: m.digest,
+          ours,
+          why: `Job "${j.name}" pulled ${byDigest ? repo : image} and got ${m.digest.slice(0, 19)}…. CRACI knows no job of ours that produced those bytes${ours.length ? ` (the newest image our jobs pushed there is ${ours[0]!.slice(0, 19)}…)` : ""}.`,
+        },
+        byDigest,
+      );
     }
+    for (const x of mine.values()) out.push(x.alert);
   }
   return out;
 }

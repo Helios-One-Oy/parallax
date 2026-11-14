@@ -1,0 +1,67 @@
+name: Parallax verdict
+description: >
+  Compare the bare and the decoy twin of this run using their CRACI network traces and SBOMs.
+  Fails the job when the twins behaved differently.
+
+inputs:
+  craci-token:
+    description: CRACI API token (Settings, API tokens).
+    required: true
+  github-token:
+    description: GitHub token that can read this repo's Actions runs and jobs (actions read).
+    required: false
+    default: ${{ github.token }}
+  allow-inconclusive:
+    description: "Set to true to pass when Parallax could not compare the twins (missing trace, twin failed early)."
+    required: false
+    default: "false"
+  history:
+    description: How many earlier bare runs of this repo to compare against, to filter out connections that come and go.
+    required: false
+    default: "5"
+
+outputs:
+  status:
+    description: clean, divergent or inconclusive
+    value: ${{ steps.verdict.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+
+    - id: verdict
+      shell: bash
+      env:
+        CRACI_API_TOKEN: ${{ inputs.craci-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PLX_RUNS_DIR: ${{ runner.temp }}/parallax
+        PLX_ALLOW_INCONCLUSIVE: ${{ inputs.allow-inconclusive }}
+        PLX_HISTORY: ${{ inputs.history }}
+      run: |
+        set +e
+        bun "$GITHUB_ACTION_PATH/../src/cli.ts" verdict \
+          --repo "$GITHUB_REPOSITORY" --run "$GITHUB_RUN_ID" \
+          --history "$PLX_HISTORY" --summary "$GITHUB_STEP_SUMMARY"
+        code=$?
+        set -e
+        case "$code" in
+          0) status=clean ;;
+          1) status=divergent ;;
+          2) status=inconclusive ;;
+          *) status=error ;;
+        esac
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        if [ "$status" = clean ]; then exit 0; fi
+        if [ "$status" = inconclusive ] && [ "$PLX_ALLOW_INCONCLUSIVE" = true ]; then
+          echo "::warning::Parallax could not compare the twins (inconclusive). Passing because allow-inconclusive is true."
+          exit 0
+        fi
+        if [ "$status" = divergent ]; then
+          echo "::error::Parallax: the bare and the decoy twin behaved differently. See the job summary."
+        elif [ "$status" = inconclusive ]; then
+          echo "::error::Parallax could not compare the twins (inconclusive). See the job summary."
+        else
+          echo "::error::Parallax stopped with an error (exit code $code)."
+        fi
+        exit 1

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Parallax</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<!--FIXTURE-->
+<header class="top">
+  <a class="brand" href="#/" aria-label="Parallax, fleet">
+    <svg viewBox="0 0 28 20" width="28" height="20" aria-hidden="true"><path d="M2 5h17M2 15h17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle class="brand-dot" cx="23.5" cy="15" r="2.6"/></svg>
+    <span>Parallax</span>
+  </a>
+  <nav aria-label="Views">
+    <a href="#/" data-nav="fleet">Fleet</a>
+    <a href="#/rings" data-nav="rings">Rings</a>
+    <a href="#/replays" data-nav="replays">Replays</a>
+  </nav>
+  <p class="fresh" id="fresh" aria-live="polite"></p>
+</header>
+<main id="main" tabindex="-1"><p class="loading">Loading</p></main>
+<footer class="foot">
+  <p>Parallax reads CRACI's network traces, SBOMs, cache and image provenance. Every row is a real job or a real GitHub object. Unknown stays empty.</p>
+</footer>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

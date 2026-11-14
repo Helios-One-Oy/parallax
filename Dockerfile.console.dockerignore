@@ -1,0 +1,9 @@
+.git
+node_modules
+specimens
+sink
+dress
+verdict
+test
+*.token
+.env

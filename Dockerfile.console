@@ -1,0 +1,10 @@
+# Parallax console (public mode). Built remotely on Fly builders (no local Docker on the box).
+FROM oven/bun:1.4-alpine
+WORKDIR /app
+COPY package.json replays.json ./
+COPY src ./src
+COPY ui ./ui
+ENV PORT=8080 PLX_MODE=public NODE_ENV=production
+EXPOSE 8080
+USER bun
+CMD ["bun", "src/server.ts"]

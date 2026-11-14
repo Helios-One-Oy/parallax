@@ -1,0 +1,15 @@
+{
+  "note": "Replay id -> fleet repo (name without the owner, resolved against src/fleet.json) and branch. Rows with repo null are not set up yet. Everything else on the scoreboard comes from real runs and verdict files.",
+  "replays": [
+    { "id": "shai-hulud", "incident": "Shai-Hulud npm worm, Sep and Nov 2025", "how": "A dependency update whose code fires only if an npm token is present.", "expected": "twins", "repo": "parallax-demo-web", "branch": "deps/telemetry-utils-2.1.1" },
+    { "id": "release-gate", "incident": "Nx s1ngularity, Aug 2025", "how": "Fires only when the ref is a tag and the event is a release.", "expected": "twins", "repo": "parallax-demo-web", "branch": "deps/release-notes-1.4.1" },
+    { "id": "fresh-host", "incident": "axios, 31 Mar 2026", "how": "A new dependency that calls a never-seen host on every build.", "expected": "new egress", "repo": "parallax-demo-web", "branch": "deps/add-retry-fetch" },
+    { "id": "pth", "incident": "LiteLLM, 24 Mar 2026", "how": "A Python package with a .pth file that fires at interpreter start if cloud keys are present.", "expected": "twins", "repo": null, "branch": null },
+    { "id": "cache-poison", "incident": "TanStack, 11 May 2026; Ultralytics, Dec 2024", "how": "A pull-request job saves a cache under the key the release job restores.", "expected": "cache lineage", "repo": null, "branch": null },
+    { "id": "tag-repoint", "incident": "tj-actions, Mar 2025; Trivy action, Mar 2026", "how": "A script fetched by a mutable URL returns new bytes.", "expected": "URL-hash drift", "repo": null, "branch": null },
+    { "id": "image-repoint", "incident": "KICS image, 22 Apr 2026", "how": "A base image tag moves to a digest no job of ours produced.", "expected": "image provenance", "repo": null, "branch": null },
+    { "id": "time-bomb", "incident": "Dormant payloads (XZ-style patience)", "how": "Fires only after a date.", "expected": "future-clock twin", "repo": "parallax-demo-web", "branch": "deps/date-range-3.0.1" },
+    { "id": "log-wipe", "incident": "wfx-loot, 10 to 12 Nov 2026", "how": "A workflow posts to a raw IP, then the run is deleted.", "expected": "CRACI trace", "repo": null, "branch": null },
+    { "id": "slopsquat", "incident": "Hallucinated package names, 2026", "how": "An install asks the registry for a name that does not exist.", "expected": "registry 404s", "repo": null, "branch": null }
+  ]
+}

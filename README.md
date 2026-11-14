@@ -29,7 +29,6 @@ Harmless copies of real attacks, run in our demo repos. Every row on the Replays
 | Hallucinated package name | caught, after the run | registry 404 in the trace | 46 s |
 | Workflow deleted from GitHub after it ran | caught | CRACI still holds its 14 connections | |
 | Dormant payload (waits for a date) | missed | | |
-| LiteLLM (.pth file) | not run yet | | |
 
 Of the first 43 twin builds 38 came out clean, 4 were the two hiding packages (each pushed twice) and 1 was a false alarm, which is now a rule: what a twin does before it is dressed is ignored.
 

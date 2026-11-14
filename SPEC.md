@@ -74,7 +74,7 @@ Each replay is a pull request in a fleet repo. Scoreboard columns: incident, how
 | `shai-hulud` | Shai-Hulud npm worm, Sep and Nov 2025 | dependency update whose code fires only if an npm token is present (env or `.npmrc`) | twins (decoy-only connections) |
 | `release-gate` | Nx s1ngularity, Aug 2025 (CI-aware payload) | fires only when the ref is a tag and the event is `release` | twins |
 | `fresh-host` | axios, 31 Mar 2026 | new dependency that calls a never-seen host on every build | new egress (both twins do it, so twins alone miss it) |
-| `pth` | LiteLLM, 24 Mar 2026 | Python package with a `.pth` file that fires at interpreter start if cloud keys are present | twins |
+| `pth` | LiteLLM, 24 Mar 2026 | Python package with a `.pth` file that fires at interpreter start if cloud keys are present | twins (not built) |
 | `cache-poison` | TanStack, 11 May 2026; Ultralytics, Dec 2024 | a pull-request job saves a cache under the key the release job restores | cache lineage (CRACI cache provenance) |
 | `tag-repoint` | tj-actions, Mar 2025; Trivy action, Mar 2026 | a script fetched by a mutable URL returns new bytes | URL-hash drift (CRACI body hashes) |
 | `image-repoint` | KICS image, 22 Apr 2026 | base image tag moves to a digest no job of ours produced | image provenance |

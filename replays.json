@@ -26,13 +26,6 @@
       "branch": "deps/add-retry-fetch"
     },
     {
-      "id": "pth",
-      "incident": "LiteLLM, 24 Mar 2026",
-      "how": "A Python package with a .pth file that fires at interpreter start if cloud keys are present.",
-      "expected": "twins",
-      "repo": null
-    },
-    {
       "id": "cache-poison",
       "incident": "TanStack, 11 May 2026; Ultralytics, Dec 2024",
       "how": "A pull-request job saves a cache under the key the release job restores.",

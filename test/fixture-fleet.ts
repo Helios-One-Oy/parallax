@@ -20,14 +20,14 @@ export const B1 = `sha256:${sha("layer-1")}`;
 export const STAGE2_URL = "https://plx-sink.test/stage2/x.txt";
 export const STAGE2_HASH = `sha256:${sha(STAGE2_URL)}`;
 
-export async function buildFixture(dir: string | null = null): Promise<{ index: FleetIndex; caches: CacheRecord[]; artifacts: PreviewArtifactProvenance[] }> {
+export async function buildFixture(dir: string | null = null, opts: { firstJobEvent?: string } = {}): Promise<{ index: FleetIndex; caches: CacheRecord[]; artifacts: PreviewArtifactProvenance[] }> {
   const index = new FleetIndex(dir);
-  const add = (repo: string, id: number, run: number, minute: number, name: string, obs: any[], purls: string[], logs: string) =>
+  const add = (repo: string, id: number, run: number, minute: number, name: string, obs: any[], purls: string[], logs: string, event = "push") =>
     index.addJob(
       buildFleetJob({
         repo,
         job: ghJob({ id, run_id: run, name }, minute),
-        run: { event: "push", head_branch: "main", name: "ci" },
+        run: { event, head_branch: "main", name: "ci" },
         trace: trace(obs, { repository: repo, jobId: String(id), runId: String(run), jobName: name }, minute),
         sbom: sbom(purls),
         logs,
@@ -40,6 +40,7 @@ export async function buildFixture(dir: string | null = null): Promise<{ index: 
     [...npmBuild(), httpObs("https://plx-registry.test/plx-specimen/-/plx-specimen-9.9.9.tgz"), httpObs(STAGE2_URL), httpObs("https://plx-sink.test/collect", { method: "POST" })],
     [...CLEAN_PURLS, SPECIMEN],
     logLines("Run actions/cache@v4", "Cache not found for input keys: npm-linux-abc", "Post job cleanup.", "Cache saved with key: npm-linux-abc"),
+    opts.firstJobEvent ?? "push",
   );
   await add(
     WEB, 102, 12, 10, "release",

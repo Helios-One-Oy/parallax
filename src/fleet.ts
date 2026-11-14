@@ -156,7 +156,7 @@ export class FleetIndex implements FleetLookup {
   async compact() {
     if (!this.dir) return;
     await mkdir(this.dir, { recursive: true });
-    const dump = (rows: Iterable<unknown>) => [...rows].map((r) => JSON.stringify(r)).join("\n") + "\n";
+    const dump = (rows: Iterable<unknown>) => [...rows].map((r) => JSON.stringify(r) + "\n").join("");
     await writeFile(join(this.dir, "jobs.jsonl"), dump(this.jobs.values()));
     await writeFile(join(this.dir, "caches.jsonl"), dump(this.caches.values()));
     await writeFile(join(this.dir, "artifacts.jsonl"), dump(this.artifacts.values()));

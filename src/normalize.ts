@@ -99,7 +99,9 @@ export function parseDnsRecord(record: string): { name: string; type: string } {
 /** Split an HTTP origin URL into canonical host (with a non-default port) and cleaned path. */
 export function splitUrl(originUrl: string, rs: RuleSet = DEFAULT_RULES): { host: string; hostPort: string; path: string } | null {
   try {
-    const u = new URL(originUrl);
+    // Tolerate a URL recorded without a scheme ("host:443", "host/path").
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(originUrl) ? originUrl : `https://${originUrl}`);
+    if (!u.hostname) return null;
     const host = canonHost(u.hostname, rs);
     return { host, hostPort: u.port ? `${host}:${u.port}` : host, path: cleanPath(u.pathname) };
   } catch {

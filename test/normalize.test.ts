@@ -35,6 +35,11 @@ describe("normalize", () => {
     );
   });
 
+  test("a URL recorded without a scheme still gets its host", () => {
+    expect(key(httpObs("plx-sink.test:443", { method: "CONNECT" }))).toBe("http CONNECT plx-sink.test/");
+    expect(normalizeObservation(httpObs("plx-sink.test/collect", { method: "POST" }))!.host).toBe("plx-sink.test");
+  });
+
   test("non-default ports stay in the key", () => {
     expect(key(httpObs("http://plx-sink.test:8080/collect", { method: "POST" }))).toBe("http POST plx-sink.test:8080/collect");
   });

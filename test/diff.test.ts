@@ -213,3 +213,23 @@ describe("a twin that failed part way", () => {
     expect(loud.divergences.map((d) => d.key)).toEqual(["http POST plx-sink.test/collect"]);
   });
 });
+
+describe("policySuggestion with our own sink registry", () => {
+  test("the registry part of the sink is a package source; its /collect stays blocked", async () => {
+    const { SINK_HOST, SINK_URL } = await import("../src/rules.ts");
+    const registry = [
+      dnsObs(SINK_HOST),
+      tcpObs(SINK_HOST, 443),
+      httpObs(`${SINK_URL}/registry/@nbd%2ftelemetry-utils`),
+      httpObs(`${SINK_URL}/registry/tarballs/telemetry-utils-2.1.1.tgz`),
+    ];
+    const attack = [httpObs(`${SINK_URL}/stage2/shai-hulud`), httpObs(`${SINK_URL}/collect`, { method: "POST" })];
+    const v = diffTwins(bareTwin([...npmBuild(), ...registry]), decoyTwin([...npmBuild(), ...registry, ...attack]));
+    expect(v.divergences.map((d) => d.key)).toEqual([`http GET ${SINK_HOST}/stage2/shai-hulud`, `http POST ${SINK_HOST}/collect`]);
+    const p = policySuggestion(v);
+    const doc = Bun.YAML.parse(p.yaml) as any;
+    expect(doc.sources).toEqual([{ npm: { urls: [`${SINK_URL}/registry`] } }]);
+    expect(JSON.stringify(doc.connections)).not.toContain(SINK_HOST);
+    expect(p.blocked).toEqual([SINK_HOST]);
+  });
+});

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildGraph, cacheEventsFromLog, cacheNodeId, deriveCacheRestores, jobNodeId, ociRefsFromTrace, r0, ringFence, rings } from "../src/graph.ts";
+import { buildFleetJob } from "../src/fleet.ts";
+import { buildGraph, cacheEventsFromLog, cacheLineageAlerts, cacheNodeId, deriveCacheRestores, foreignImagePulls, jobNodeId, ociRefsFromTrace, r0, ringFence, rings } from "../src/graph.ts";
 import type { JobSummary } from "../src/types.ts";
-import { at, httpObs, jobMeta, logLines, trace } from "./factories.ts";
+import { at, ghJob, httpObs, jobMeta, logLines, trace } from "./factories.ts";
 import { API, B1, buildFixture, M1, SPECIMEN, STAGE2_HASH, WEB } from "./fixture-fleet.ts";
 
 const ids = (ring: Array<{ id: string }>) => ring.map((m) => m.id).sort();
@@ -124,5 +125,35 @@ describe("rings on a fleet of 6 jobs, 2 caches, 1 image", () => {
     expect(done.actions[2]!.detail).toContain("403");
     expect(done.actions[3]!.detail).toBe("https://github.com/x/pull/7");
     await expect(ringFence(r, { dryRun: false })).rejects.toThrow();
+  });
+});
+
+describe("detectors on the same graph", () => {
+  test("cache lineage: a trusted job restored a cache written by a pull-request job", async () => {
+    const calm = cacheLineageAlerts(buildGraph((await buildFixture()).index));
+    expect(calm).toEqual([]);
+    const { index } = await buildFixture(null, { firstJobEvent: "pull_request_target" });
+    const alerts = cacheLineageAlerts(buildGraph(index));
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ repo: WEB, writer: { jobId: "101", event: "pull_request_target" }, reader: { jobId: "102", runId: "12", event: "push" } });
+    expect(alerts[0]!.cache.key).toBe("npm-linux-abc");
+    expect(alerts[0]!.why).toContain("Anyone can trigger that kind of run.");
+  });
+
+  test("image provenance: a pull of our own tag that returns bytes no job of ours produced", async () => {
+    const { index } = await buildFixture();
+    expect(foreignImagePulls(index)).toEqual([]);
+    const moved = "sha256:" + "e".repeat(64);
+    await index.addJob(
+      buildFleetJob({
+        repo: API,
+        job: ghJob({ id: 203, run_id: 23, name: "build (bare)" }, 60),
+        trace: trace([httpObs("https://ghcr.io/v2/test-org/web/manifests/v1", { bodyHash: { sha256: moved.slice(7) } }), httpObs("https://registry-1.docker.io/v2/library/node/manifests/22", { bodyHash: { sha256: "f".repeat(64) } })], {}, 60),
+        sbom: null,
+      }),
+    );
+    const alerts = foreignImagePulls(index);
+    expect(alerts).toHaveLength(1); // the public node image is not ours, so it is not judged
+    expect(alerts[0]).toMatchObject({ repo: API, jobId: "203", image: "ghcr.io/test-org/web:v1", digest: moved, ours: [M1] });
   });
 });

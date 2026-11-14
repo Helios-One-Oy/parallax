@@ -3,7 +3,7 @@
 import type { CacheRecord, FleetIndex, FleetJob } from "./fleet.ts";
 import type { GithubClient } from "./github.ts";
 import { splitUrl } from "./normalize.ts";
-import { CACHE_RESTORE_LOG_PATTERNS, CACHE_SAVE_LOG_PATTERNS } from "./rules.ts";
+import { CACHE_RESTORE_LOG_PATTERNS, CACHE_SAVE_LOG_PATTERNS, UNTRUSTED_EVENTS } from "./rules.ts";
 import type { JobSummary, NetworkTrace, PreviewArtifactProvenance } from "./types.ts";
 
 // ---------- derivations from raw CRACI data (the parts that will need tuning) ----------
@@ -569,4 +569,95 @@ export async function ringFence(r: Rings, o: FenceOptions = {}): Promise<FenceRe
     a.executed = true;
   }
   return result;
+}
+
+// ---------- two detectors that read the same graph data ----------
+
+export type LineageAlert = {
+  repo: string;
+  cache: { id: string; key: string };
+  writer: { jobId: string; name: string; event: string; branch: string };
+  reader: { jobId: string; runId: string; name: string; event: string; branch: string };
+  evidence: string;
+  why: string;
+};
+
+/**
+ * Cache lineage: a cache written by a job anyone can trigger (a pull request, an issue comment) and
+ * restored by a job of a trusted event (push, release, schedule). The Ultralytics and TanStack pattern.
+ */
+export function cacheLineageAlerts(g: Graph): LineageAlert[] {
+  const out: LineageAlert[] = [];
+  const untrusted = (event: string) => UNTRUSTED_EVENTS.includes(event);
+  for (const e of g.edges) {
+    if (e.type !== "restored") continue;
+    const reader = g.nodes.get(e.from)?.data as FleetJob | undefined;
+    const cache = g.nodes.get(e.to);
+    if (!reader?.event || !cache || untrusted(reader.event)) continue;
+    for (const c of g.in(e.to, "created")) {
+      const writer = g.nodes.get(c.from)?.data as FleetJob | undefined;
+      if (!writer?.event || !untrusted(writer.event)) continue;
+      out.push({
+        repo: reader.repo,
+        cache: { id: cache.id, key: cache.label },
+        writer: { jobId: writer.jobId, name: writer.name, event: writer.event, branch: writer.branch },
+        reader: { jobId: reader.jobId, runId: reader.runId, name: reader.name, event: reader.event, branch: reader.branch },
+        evidence: `${c.evidence}; ${e.evidence}`,
+        why: `Job "${reader.name}" (${reader.event} on ${reader.branch || "?"}) restored the cache "${cache.label}", which was written by job "${writer.name}" of a ${writer.event.replace(/_/g, " ")} run on ${writer.branch || "?"}. Anyone can trigger that kind of run.`,
+      });
+    }
+  }
+  return out.sort((a, b) => a.reader.jobId.localeCompare(b.reader.jobId));
+}
+
+export type ImageAlert = {
+  repo: string;
+  jobId: string;
+  name: string;
+  image: string;
+  digest: string;
+  /** Digests our own jobs pushed under the same tag, newest first. */
+  ours: string[];
+  why: string;
+};
+
+/**
+ * Image provenance: a job pulled an image from a repository our own jobs push to, but the bytes it got
+ * were not produced by any of our jobs (CRACI has no creating job for that digest). The tag was moved.
+ */
+export function foreignImagePulls(input: GraphInput): ImageAlert[] {
+  const jobs = values<FleetJob>(input.jobs as any);
+  const artifacts = values<PreviewArtifactProvenance>(input.artifacts as any);
+  const ourRepos = new Set<string>();
+  const made = new Set<string>();
+  const byTag = new Map<string, Array<{ digest: string; at: string }>>();
+  for (const a of artifacts) {
+    if (a.kind === "gha_cache" || a.kind === "oci_blob") continue;
+    for (const cr of a.jobs_created_in ?? []) {
+      made.add(a.digest);
+      if (cr.metadata?.kind !== "oci") continue;
+      const repo = `${canonRegistry(cr.metadata.registry)}/${cr.metadata.repository}`;
+      ourRepos.add(repo);
+      const k = `${repo}:${cr.metadata.reference}`;
+      (byTag.get(k) ?? byTag.set(k, []).get(k)!).push({ digest: a.digest, at: cr.accepted_at });
+    }
+  }
+  const out: ImageAlert[] = [];
+  for (const j of jobs) {
+    for (const m of j.oci?.manifests ?? []) {
+      const repo = `${m.registry}/${m.name}`;
+      if (m.op !== "pull" || !m.digest || !ourRepos.has(repo) || made.has(m.digest)) continue;
+      const ours = (byTag.get(`${repo}:${m.ref}`) ?? []).sort((a, b) => b.at.localeCompare(a.at)).map((x) => x.digest);
+      out.push({
+        repo: j.repo,
+        jobId: j.jobId,
+        name: j.name,
+        image: `${repo}:${m.ref}`,
+        digest: m.digest,
+        ours,
+        why: `Job "${j.name}" pulled ${repo}:${m.ref} and got ${m.digest.slice(0, 19)}…, which no job of ours produced${ours.length ? ` (ours pushed ${ours[0]!.slice(0, 19)}… under that tag)` : ""}.`,
+      });
+    }
+  }
+  return out;
 }

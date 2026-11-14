@@ -234,6 +234,7 @@ export class GithubClient {
             ...(body === undefined ? {} : { "content-type": "application/json" }),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(30_000),
         });
       } catch (e) {
         if (attempt >= 3) throw e;

@@ -28,6 +28,12 @@ export type Rule = {
 
 export type SegmentRule = { name: string; match: RegExp; to: string };
 
+// Our own sink (sink/): it serves the specimen packages as an npm registry under /registry and takes
+// the specimens' calls on /stage2/:id and /collect. One place for its address, like everywhere else.
+export const SINK_URL = (process.env.PLX_SINK_URL || "https://parallax-sink.fly.dev").replace(/\/+$/, "");
+export const SINK_HOST = new URL(SINK_URL).host;
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // 1. Hosts whose name itself rotates between runs.
 export const HOST_RULES: HostRule[] = [
   // Only GitHub's own result/cache storage accounts are folded together; any other storage account keeps its name.
@@ -90,6 +96,7 @@ export const SEGMENT_RULES: SegmentRule[] = [
 // Tested against "host/path" (no scheme, no query).
 export const MUTABLE_URL_RULES: Array<{ name: string; match: RegExp }> = [
   { name: "npm-packument", match: /^(registry\.npmjs\.org|registry\.yarnpkg\.com)\/(?!.*\/-\/)/ },
+  { name: "sink-registry-packument", match: new RegExp(`^${esc(SINK_HOST)}/registry/(?!tarballs/)`) },
   { name: "pypi-index-page", match: /^pypi\.org\/(simple|pypi)\// },
   { name: "apt-index", match: /\/(dists\/.*|InRelease|Release(\.gpg)?|Packages(\.(gz|xz|bz2))?|APKINDEX\.tar\.gz)$/ },
   { name: "go-proxy-list", match: /^proxy\.golang\.org\/.*\/@(v\/list|latest)$/ },
@@ -104,6 +111,7 @@ export const MUTABLE_URL_RULES: Array<{ name: string; match: RegExp }> = [
 // Registry "this name does not exist" answers (fleet.notFound). Group 1 = the package name.
 export const REGISTRY_404_RULES: Array<{ name: string; registry: string; match: RegExp }> = [
   { name: "npm", registry: "npm", match: /^(?:registry\.npmjs\.org|registry\.yarnpkg\.com)\/((?:@[^/]+\/)?[^/]+)$/ },
+  { name: "sink-registry", registry: "npm", match: new RegExp(`^${esc(SINK_HOST)}/registry/(?!tarballs/)((?:@[^/]+/)?[^/]+)$`) },
   { name: "pypi", registry: "pypi", match: /^pypi\.org\/simple\/([^/]+)\/?$/ },
   { name: "crates", registry: "cargo", match: /^index\.crates\.io\/(?:[^/]+\/){1,2}([^/]+)$/ },
   { name: "go", registry: "golang", match: /^proxy\.golang\.org\/(.+)\/@v\/list$/ },
@@ -133,6 +141,12 @@ export const PRESET_HOSTS: Array<{ preset: string; host: RegExp }> = [
   { preset: "docker-apt", host: /^download\.docker\.com$/ },
   { preset: "nodesource", host: /^deb\.nodesource\.com$/ },
   { preset: "bitbucket", host: /^bitbucket\.org$/ },
+];
+
+// Private package registries: allowed as a CRACI package `source` (a URL prefix, still inspected),
+// never as a whole-host connection. `path` = the part of the host that is the registry.
+export const SOURCE_HOSTS: Array<{ source: "npm" | "pypi"; host: RegExp; path: RegExp; url: string }> = [
+  { source: "npm", host: new RegExp(`^${esc(SINK_HOST)}$`), path: /^\/registry(\/|$)/, url: `${SINK_URL}/registry` },
 ];
 
 /** Complete list of preset names CRACI accepts (guides_setup-action-network.md). */
@@ -165,3 +179,7 @@ export const TWIN_JOB_PATTERNS = { bare: /\(bare\)\s*$/, decoy: /\(decoy\)\s*$/ 
 
 // Steps that are never "the build": runner bookkeeping and `uses:` steps (default name "Run owner/repo@ref").
 export const SETUP_STEP_PATTERN = /^(Set up job|Complete job|Post |Pre |Run [\w.-]+\/[\w./-]+@|Initialize containers|Stop containers)/;
+
+// Workflow events anyone outside the team can trigger. A cache written by such a job and restored by a
+// job of a trusted event is the cache-poisoning pattern (graph.cacheLineageAlerts).
+export const UNTRUSTED_EVENTS = ["pull_request", "pull_request_target", "issue_comment", "issues", "discussion", "discussion_comment", "fork", "watch"];

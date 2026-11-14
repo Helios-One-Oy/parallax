@@ -6,7 +6,7 @@ import { CraciClient } from "./craci.ts";
 import { diffTwinsDetailed, policySuggestion, type DiffDetail, type TwinInput } from "./diff.ts";
 import { buildFleetJob, FleetIndex, loadFleetRepos, syncFleet } from "./fleet.ts";
 import { GithubClient, type GhJob, type GhRun } from "./github.ts";
-import { buildGraph, ringFence, rings } from "./graph.ts";
+import { buildGraph, cacheLineageAlerts, foreignImagePulls, ringFence, rings } from "./graph.ts";
 import { assertRepo, verdictsDir } from "./paths.ts";
 import { BUILD_STEP_PATTERN, SETUP_STEP_PATTERN, TWIN_JOB_PATTERNS } from "./rules.ts";
 import type { JobRef, Verdict } from "./types.ts";
@@ -157,7 +157,6 @@ async function cmdVerdict(a: Args): Promise<number> {
 
   // 4. the diff
   const detail = diffTwinsDetailed(tb, td, { bareRuns, fleet: mem.jobs.size > 0 ? mem : undefined });
-  if (!bare || !decoy) detail.notes.unshift(`This run has no job named like "${!bare ? "build (bare)" : "build (decoy)"}".`);
   if (mem.jobs.size === 0) detail.notes.push("No earlier jobs are known, so nothing is marked as new in the fleet.");
   else detail.notes.push(`Compared against ${bareRuns.length} earlier bare run${bareRuns.length === 1 ? "" : "s"} of this repo.`);
   const v = detail.verdict;
@@ -295,6 +294,24 @@ async function cmdEgress(a: Args): Promise<number> {
   return 0;
 }
 
+async function cmdLineage(a: Args): Promise<number> {
+  const index = await FleetIndex.load();
+  const rows = cacheLineageAlerts(buildGraph(index));
+  if (a.json) console.log(JSON.stringify(rows, null, 2));
+  else if (!rows.length) console.log(`no trusted job restored a cache written by an untrusted one (${index.jobs.size} jobs, ${index.caches.size} caches)`);
+  else for (const r of rows) console.log(`${r.repo} job ${r.reader.jobId}: ${r.why}\n    ${r.evidence}`);
+  return 0;
+}
+
+async function cmdImages(a: Args): Promise<number> {
+  const index = await FleetIndex.load();
+  const rows = foreignImagePulls(index);
+  if (a.json) console.log(JSON.stringify(rows, null, 2));
+  else if (!rows.length) console.log(`no job pulled an image of ours that our jobs did not produce (${index.artifacts.size} image artifacts known)`);
+  else for (const r of rows) console.log(`${r.repo} job ${r.jobId}: ${r.why}`);
+  return 0;
+}
+
 const HELP = `Parallax
   bun src/cli.ts sync [--repo O/R] [--max-runs N] [--retry-missing]   index all finished jobs of the fleet
   bun src/cli.ts verdict --repo O/R --run ID [--json]        diff the two twins of a run (exit 0 clean, 1 divergent, 2 inconclusive)
@@ -302,7 +319,9 @@ const HELP = `Parallax
   bun src/cli.ts rings --seed <purl|host|sha256:…|job:ID>    contact tracing [--json] [--fence] [--execute]
   bun src/cli.ts drift [--all] [--json]                      URLs whose bytes changed between jobs
   bun src/cli.ts notfound [--json]                           registry names that did not exist
-  bun src/cli.ts egress [--repo O/R] [--json]                hosts that were new for their repo`;
+  bun src/cli.ts egress [--repo O/R] [--json]                hosts that were new for their repo
+  bun src/cli.ts lineage [--json]                            caches written by untrusted jobs and restored by trusted ones
+  bun src/cli.ts images [--json]                             pulls of our own images whose bytes no job of ours produced`;
 
 export async function main(argv: string[]): Promise<number> {
   const a = parseArgs(argv);
@@ -313,6 +332,8 @@ export async function main(argv: string[]): Promise<number> {
     case "drift": return cmdDrift(a);
     case "notfound": return cmdNotFound(a);
     case "egress": return cmdEgress(a);
+    case "lineage": return cmdLineage(a);
+    case "images": return cmdImages(a);
     default:
       console.log(HELP);
       return a._[0] ? 64 : 0;

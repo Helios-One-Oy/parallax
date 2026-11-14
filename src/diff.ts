@@ -2,7 +2,7 @@
 // of the two builds pull in. Decides clean / divergent / inconclusive. Never guesses.
 import { DEFAULT_RULES, hostsOf, normalizeTrace, type NormObs, type NormTrace, type RuleSet } from "./normalize.ts";
 import { isIp } from "./normalize.ts";
-import { PLATFORM_HOSTS, PRESET_HOSTS, PRESET_NAMES } from "./rules.ts";
+import { PLATFORM_HOSTS, PRESET_HOSTS, PRESET_NAMES, SOURCE_HOSTS } from "./rules.ts";
 import type { CdxComponent, CycloneDxBom, Divergence, JobRef, NetworkTrace, Verdict } from "./types.ts";
 
 export const FLAP_RULE = "flaps-in-history";
@@ -60,14 +60,15 @@ export function diffTwinsDetailed(bare: TwinInput, decoy: TwinInput, history: Hi
 
   // --- can we judge at all? ---
   for (const [label, twin] of [["bare", bare], ["decoy", decoy]] as const) {
-    if (!twin.trace) notes.push(`The ${label} twin has no network trace on CRACI.`);
+    if (twin.job.status === "missing") notes.push(`This run has no ${label} twin job.`);
+    else if (!twin.trace) notes.push(`The ${label} twin has no network trace on CRACI.`);
     else if (!Array.isArray(twin.trace.observations) || twin.trace.observations.length === 0)
       notes.push(`The ${label} twin's network trace is empty.`);
     if (twin.reachedBuild === false) notes.push(`The ${label} twin stopped before its build steps ran.`);
     const c = twin.conclusion;
     if (c && ["cancelled", "skipped", "timed_out", "startup_failure", "stale"].includes(c))
       notes.push(`The ${label} twin did not run to the end (${c.replace("_", " ")}).`);
-    if (twin.job.status && !["completed", "success", "failure", "succeeded", "failed"].includes(twin.job.status) && !twin.trace)
+    if (twin.job.status && ["queued", "in_progress", "waiting", "pending", "requested"].includes(twin.job.status))
       notes.push(`The ${label} twin is not finished (${twin.job.status}).`);
   }
   // A twin that failed half way never got to do the rest of its build. What only the *other* twin did
@@ -260,10 +261,12 @@ export type PolicySuggestion = {
   /** A ready-to-paste `cracicorp/setup@v1` step with that policy. */
   step: string;
   presets: string[];
+  /** Private package registries, allowed by URL prefix only. */
+  sources: Array<{ type: string; urls: string[] }>;
   tls: Array<{ host: string; ports: number[] }>;
   tcp: Array<{ host?: string; cidr?: string; ports: number[] }>;
   git: Array<{ host: string; port: number; user: string }>;
-  /** Hosts seen in the run that the policy leaves blocked (the divergent ones). */
+  /** Hosts with divergent traffic that the policy does not open as a whole host. */
   blocked: string[];
 };
 
@@ -287,6 +290,7 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
   const tcp = new Map<string, Set<number>>();
   const git = new Map<string, { host: string; port: number; user: string }>();
   const allowedHosts = new Set<string>();
+  const sources = new Map<string, Set<string>>();
 
   const presetFor = (host: string, matchedRule?: string | null): string | null => {
     if (matchedRule) {
@@ -304,14 +308,25 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
       const o = n.raw as any;
       if (!n.host || n.kind === "dns") continue; // DNS needs no rule: names resolve even for blocked destinations
       if (o.http?.policyDenied || o.tcp?.allowed === false || o.sshGit?.allowed === false) continue;
-      allowedHosts.add(n.host);
-      if (PLATFORM_HOSTS.some((re) => re.test(n.host))) continue;
+      if (PLATFORM_HOSTS.some((re) => re.test(n.host))) {
+        allowedHosts.add(n.host);
+        continue;
+      }
       const matched = o.http?.matchedRule ?? o.tcp?.matchedRule ?? o.sshGit?.matchedRule;
       const preset = presetFor(n.host, matched);
       if (preset) {
         presets.add(preset);
+        allowedHosts.add(n.host);
         continue;
       }
+      const src = n.kind === "http" ? SOURCE_HOSTS.find((s) => s.host.test(n.host) && s.path.test(urlPath(o.http.originUrl))) : undefined;
+      if (src) {
+        // Opened by URL prefix only: other paths on this host stay blocked.
+        (sources.get(src.source) ?? sources.set(src.source, new Set()).get(src.source)!).add(src.url);
+        continue;
+      }
+      // The plain connection to a registry host is covered by its source rule; never open the whole host for it.
+      if (n.kind === "tcp" && SOURCE_HOSTS.some((s) => s.host.test(n.host))) continue;
       if (n.kind === "ssh_git") {
         git.set(`${n.host}:${o.sshGit.port}:${o.sshGit.user}`, { host: n.host, port: o.sshGit.port, user: o.sshGit.user });
       } else if (n.kind === "http") {
@@ -331,6 +346,7 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
       }
     }
   }
+  for (const h of [...tls.keys(), ...tcp.keys(), ...[...git.values()].map((x) => x.host)]) allowedHosts.add(h);
   // A host reached over TLS needs only the TLS rule.
   for (const h of tls.keys()) {
     const t = tcp.get(h);
@@ -346,13 +362,19 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
     .map(([host, ports]) => ({ ...(isIp(host) ? { cidr: `${host}/32` } : { host }), ports: [...ports].sort((a, b) => a - b) }) as PolicySuggestion["tcp"][number])
     .sort((a, b) => (a.host ?? a.cidr!).localeCompare(b.host ?? b.cidr!));
   const gitList = [...git.values()].sort((a, b) => a.host.localeCompare(b.host));
+  const sourceList = [...sources].map(([type, urls]) => ({ type, urls: [...urls].sort() })).sort((a, b) => a.type.localeCompare(b.type));
 
   const lines: string[] = [];
   lines.push("# Suggested by Parallax from what the bare twin used. Everything else is blocked.");
   lines.push("default: deny");
   lines.push(`presets: [${sortedPresets.join(", ")}]`);
-  if (gitList.length) {
+  if (gitList.length || sourceList.length) {
     lines.push("sources:");
+    for (const s of sourceList) {
+      lines.push(`  - ${s.type}:`);
+      lines.push("      urls:");
+      for (const u of s.urls) lines.push(`        - ${yamlStr(u)}`);
+    }
     for (const g of gitList) {
       lines.push("  - git:");
       lines.push("      ssh:");
@@ -378,11 +400,19 @@ export function policySuggestion(verdict: Verdict, bareTrace?: NetworkTrace | No
   for (const h of blocked) lines.push(`# stays blocked: ${h}`);
   const yaml = lines.join("\n") + "\n";
   const step = ["- uses: cracicorp/setup@v1", "  with:", "    network: |", ...lines.map((l) => `      ${l}`)].join("\n") + "\n";
-  return { yaml, step, presets: sortedPresets, tls: tlsList, tcp: tcpList, git: gitList, blocked };
+  return { yaml, step, presets: sortedPresets, sources: sourceList, tls: tlsList, tcp: tcpList, git: gitList, blocked };
+}
+
+function urlPath(originUrl: string): string {
+  try {
+    return new URL(originUrl).pathname;
+  } catch {
+    return "";
+  }
 }
 
 function yamlStr(s: string): string {
-  return /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(s) && !/^(true|false|null|yes|no|on|off|~)$/i.test(s) && !/^[\d.]+$/.test(s)
+  return /^[A-Za-z0-9_][A-Za-z0-9_./:-]*[A-Za-z0-9_/]$/.test(s) && !/^(true|false|null|yes|no|on|off|~)$/i.test(s) && !/^[\d.]+$/.test(s)
     ? s
     : JSON.stringify(s);
 }

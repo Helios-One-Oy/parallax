@@ -50,6 +50,8 @@ export type CraciOptions = {
   now?: () => number;
   maxRetries?: number;
   pollMs?: number;
+  /** Per-request timeout in ms (not applied to followLogs). Default 60 s. */
+  timeoutMs?: number;
 };
 
 export type WaitOptions = {
@@ -93,6 +95,7 @@ export class CraciClient {
   private readonly now: () => number;
   private readonly maxRetries: number;
   private readonly pollMs: number;
+  private readonly timeoutMs: number;
 
   constructor(o: CraciOptions = {}) {
     this.baseUrl = o.baseUrl ?? process.env.CRACI_API_URL ?? "https://api.craci.com";
@@ -103,6 +106,7 @@ export class CraciClient {
     this.now = o.now ?? Date.now;
     this.maxRetries = o.maxRetries ?? 5;
     this.pollMs = o.pollMs ?? 5_000;
+    this.timeoutMs = o.timeoutMs ?? 60_000;
   }
 
   // ---------- the nine endpoints ----------
@@ -138,7 +142,7 @@ export class CraciClient {
     const res = await this.request(
       "/v1preview1/job-logs",
       { provider: "github", repo, job_id: jobId, follow: true, tail: o.tail || undefined },
-      { accept: "text/plain", waitForMs: o.waitFor ?? 0, waitStatuses: [404], signal: o.signal },
+      { accept: "text/plain", waitForMs: o.waitFor ?? 0, waitStatuses: [404], signal: o.signal, noTimeout: true },
     );
     if (!res.body) return;
     const reader = res.body.getReader();
@@ -309,7 +313,7 @@ export class CraciClient {
   private async request(
     path: string,
     q: Query,
-    o: { accept?: string; waitForMs?: number; waitStatuses?: number[]; signal?: AbortSignal } = {},
+    o: { accept?: string; waitForMs?: number; waitStatuses?: number[]; signal?: AbortSignal; noTimeout?: boolean } = {},
   ): Promise<Response> {
     const url = new URL(path, this.baseUrl);
     for (const [k, v] of Object.entries(q)) {
@@ -327,11 +331,11 @@ export class CraciClient {
       try {
         res = await this.fetchImpl(url, {
           headers: { authorization: `Bearer ${this.token}`, accept: o.accept ?? "application/json" },
-          signal: o.signal,
+          signal: o.noTimeout ? o.signal : o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
         });
       } catch (e) {
         if (o.signal?.aborted) throw e;
-        netErr = e;
+        netErr = e; // includes our own timeout: retried like any network error
       }
       if (res?.ok) return res;
       const status = res?.status ?? 0;

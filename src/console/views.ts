@@ -1,8 +1,9 @@
 // What each page shows, derived from a snapshot with the core's own functions. Pure: no disk, no network.
+import { detectContext, detectRun, judge, type DetectContext, type RunDetection } from "../detect.ts";
 import { FleetIndex, type FleetJob } from "../fleet.ts";
 import { buildGraph, cacheLineageAlerts, cacheNodeId, foreignImagePulls, ringFence, rings, type FenceResult, type Graph, type RingMember } from "../graph.ts";
-import { TWIN_JOB_PATTERNS } from "../rules.ts";
-import type { Divergence, JobSummary, Verdict } from "../types.ts";
+import { MIN_EGRESS_RUNS, TWIN_JOB_PATTERNS } from "../rules.ts";
+import type { Check, Divergence, Finding, JobSummary, Organ, Verdict } from "../types.ts";
 import { runKey, type GhJobLite, type Snapshot, type TwinConn, type TwinDetail } from "./snapshot.ts";
 
 // ---------- shared ----------
@@ -19,6 +20,24 @@ export function coreOf(s: Snapshot): { index: FleetIndex; graph: Graph } {
     d = { index, graph: buildGraph(index) };
     derived.set(s, d);
   }
+  return d;
+}
+
+const detectCtx = new WeakMap<Snapshot, DetectContext>();
+const detections = new WeakMap<Snapshot, Map<string, RunDetection>>();
+
+/** What the detectors other than the twin diff say about one run, from the snapshot as it is now. */
+export function detectionOf(s: Snapshot, repo: string, runId: string): RunDetection {
+  let ctx = detectCtx.get(s);
+  if (!ctx) {
+    const { index, graph } = coreOf(s);
+    ctx = detectContext(index, graph);
+    detectCtx.set(s, ctx);
+  }
+  const map = detections.get(s) ?? detections.set(s, new Map()).get(s)!;
+  const k = runKey(repo, runId);
+  let d = map.get(k);
+  if (!d) map.set(k, (d = detectRun(ctx, repo, runId)));
   return d;
 }
 
@@ -45,6 +64,11 @@ export type RunRow = {
   hasTwins: boolean;
   verdict: Verdict["status"] | null;
   divergences: number;
+  /** All detectors together. null = nothing judged this run (no verdict and no finding). */
+  result: "pass" | "fail" | "inconclusive" | null;
+  /** The detectors that found something in this run, the twin diff included. */
+  caughtBy: Organ[];
+  findings: number;
   pr: { number: number; url: string } | null;
   /** GitHub no longer has this run (it was deleted there). */
   gone: boolean;
@@ -63,7 +87,7 @@ export function runsOf(s: Snapshot): Map<string, RunRow> {
       r = {
         repo, runId, branch: "", sha: "", event: "", workflow: "", title: "", startedAt: "",
         url: `https://github.com/${repo}/actions/runs/${runId}`,
-        status: null, conclusion: null, live: false, hasTwins: false, verdict: null, divergences: 0, pr: null, gone: false,
+        status: null, conclusion: null, live: false, hasTwins: false, verdict: null, divergences: 0, result: null, caughtBy: [], findings: 0, pr: null, gone: false,
       };
       out.set(k, r);
     }
@@ -117,6 +141,15 @@ export function runsOf(s: Snapshot): Map<string, RunRow> {
     r.startedAt ||= v.createdAt;
     r.hasTwins = true;
   }
+  const tracedRuns = new Set(s.jobs.filter((j) => j.hasTrace && j.runId).map((j) => runKey(j.repo, j.runId)));
+  for (const [k, r] of out) {
+    const findings = tracedRuns.has(k) ? detectionOf(s, r.repo, r.runId).findings : [];
+    r.findings = findings.length;
+    if (!r.verdict && !findings.length) continue;
+    const j = judge(r.verdict ?? "clean", findings);
+    r.caughtBy = j.caughtBy;
+    r.result = r.verdict || j.result === "fail" ? j.result : null;
+  }
   runsCache.set(s, out);
   return out;
 }
@@ -152,8 +185,8 @@ export function alertsOf(s: Snapshot): Alerts {
   const traced = index.sorted().filter((j) => j.hasTrace);
   const egress = traced
     .map((j) => ({ repo: j.repo, runId: j.runId, jobId: j.jobId, name: j.name, at: j.startedAt, ...index.newEgress(j) }))
-    .filter((r) => r.earlierJobs > 0 && r.hosts.length > 0)
-    .map(({ earlierJobs: _e, ...r }) => r)
+    .filter((r) => r.earlierRuns >= MIN_EGRESS_RUNS && r.hosts.length > 0)
+    .map(({ earlierJobs: _e, earlierRuns: _r, ...r }) => r)
     .reverse();
   return {
     jobs: traced.length,
@@ -263,6 +296,10 @@ export type RunView = {
   rows: TwinRow[];
   sides: { bare: { hasTrace: boolean; observations: number; noise: number } | null; decoy: { hasTrace: boolean; observations: number; noise: number } | null };
   packages: Divergence[];
+  /** What the detectors other than the twin diff found for any job of this run (also the release job). */
+  findings: Finding[];
+  /** Per detector: did it have anything to look at. */
+  checks: Check[];
   /** Every job of the run as GitHub lists them, for the pipeline strip. */
   jobs: GhJobLite[];
   gate: Gate;
@@ -397,6 +434,7 @@ export function runView(s: Snapshot, repo: string, runId: string): RunView | nul
       hasLog: logs.has(`${repo}#${jobId}`),
     };
   };
+  const detection = detectionOf(s, repo, runId);
   const side = (x: TwinDetail["bare"] | undefined) => (x ? { hasTrace: x.hasTrace, observations: x.observations, noise: x.noise } : null);
   return {
     run,
@@ -405,6 +443,8 @@ export function runView(s: Snapshot, repo: string, runId: string): RunView | nul
     rows: mergeRows(verdict, detail),
     sides: { bare: side(detail?.bare), decoy: side(detail?.decoy) },
     packages: (verdict?.divergences ?? []).filter((d) => d.kind === "package"),
+    findings: detection.findings,
+    checks: [...(verdict?.checks ?? []).filter((c) => c.organ === "twins"), ...detection.checks],
     jobs,
     gate: gateOf(run, verdict, jobs, fromGithub),
     seeds: verdict ? seedsOf(s, verdict) : [],
@@ -486,71 +526,123 @@ export function ringsFor(s: Snapshot, rawSeed: string) {
 
 // ---------- replay scoreboard ----------
 
-export type ReplayDef = { id: string; incident: string; how: string; expected: string; repo: string | null; branch: string | null };
+/**
+ * Where a replay runs. `repo` plus at least one of:
+ *  - `runId`: exactly this run (also one GitHub has deleted since);
+ *  - `branch`, `workflow`, `event`: the newest judged run that matches all that are given;
+ *  - `match`: among those runs, the newest one with a finding that names this text (a host, a URL, a package, or a detector name).
+ * A replay with a `repo` only, or none, is "not set up".
+ */
+export type ReplayDef = {
+  id: string;
+  incident: string;
+  how: string;
+  expected: string;
+  repo: string | null;
+  branch?: string | null;
+  runId?: string | null;
+  workflow?: string | null;
+  event?: string | null;
+  match?: string | null;
+};
 
 export type ReplayRow = ReplayDef & {
   /** Full OWNER/REPO from the fleet list, when the replay's repo is in the fleet. */
   fullRepo: string | null;
-  state: "not_set_up" | "not_run" | "running" | "no_verdict" | "caught" | "missed";
+  state: "not_set_up" | "not_run" | "not_seen" | "running" | "no_verdict" | "caught" | "missed";
   run: RunRow | null;
   organs: string[];
   saw: string[];
+  /** From the start of the run to the end of the job that settled it (the verdict job, or the job that holds the finding). */
   seconds: number | null;
+  /** Did the run's own verdict job fail, so the release never started? null = the run has no finished verdict job. */
+  stopped: boolean | null;
+  /** The job on a CRACI runner whose record shows it. */
+  job: { name: string; url: string } | null;
 };
 
 export function replayRows(s: Snapshot, defs: ReplayDef[]): ReplayRow[] {
-  const { index, graph } = coreOf(s);
+  const { index } = coreOf(s);
   const runs = [...runsOf(s).values()];
-  const lineage = cacheLineageAlerts(graph);
-  const drift = index.urlHashDrift();
-  const images = foreignImagePulls(index);
-  const notFound = index.notFound();
+  type Hit = { organ: string; key: string; why: string; jobId: string; fails: boolean };
+  const hitsOf = (r: RunRow): Hit[] => {
+    const v = s.verdicts.find((x) => x.repo === r.repo && x.runId === r.runId);
+    const out: Hit[] = [];
+    if (v?.status === "divergent")
+      for (const d of v.divergences) out.push({ organ: "twins", key: d.key, why: d.why, jobId: d.side === "decoy-only" ? v.twins.decoy.jobId : v.twins.bare.jobId, fails: true });
+    for (const f of detectionOf(s, r.repo, r.runId).findings) out.push({ organ: f.organ, key: f.key, why: f.why, jobId: f.jobId, fails: f.fails });
+    // A cache this run wrote that a trusted job restored later: the finding sits on the reader's run, the replay is the writer.
+    for (const a of detectCtx.get(s)?.lineage ?? []) {
+      const w = index.getJob(a.repo, a.writer.jobId);
+      if (a.repo === r.repo && w?.runId === r.runId && a.reader.runId !== r.runId) out.push({ organ: "cache lineage", key: a.cache.key, why: a.why, jobId: a.reader.jobId, fails: true });
+    }
+    return out;
+  };
 
   return defs.map((def): ReplayRow => {
     const fullRepo = def.repo ? (s.repos.find((r) => r === def.repo || r.endsWith(`/${def.repo}`)) ?? null) : null;
-    const base: ReplayRow = { ...def, fullRepo, state: "not_set_up", run: null, organs: [], saw: [], seconds: null };
-    if (!fullRepo || !def.branch) return base;
-    const mine = runs.filter((r) => r.repo === fullRepo && r.branch === def.branch).sort(newestFirst);
+    const base: ReplayRow = { ...def, fullRepo, state: "not_set_up", run: null, organs: [], saw: [], seconds: null, stopped: null, job: null };
+    if (!fullRepo || !(def.branch || def.runId || def.workflow || def.event || def.match)) return base;
+    const mine = runs
+      .filter((r) => r.repo === fullRepo && (!def.runId || r.runId === def.runId) && (!def.branch || r.branch === def.branch) && (!def.workflow || r.workflow === def.workflow) && (!def.event || r.event === def.event))
+      .sort(newestFirst);
     if (mine.length === 0) return { ...base, state: "not_run" };
 
-    // Judge the newest run that has something to judge; a newer one still running is shown as running.
-    const judged = mine.find((r) => r.verdict || index.sorted().some((j) => j.repo === fullRepo && j.runId === r.runId && j.hasTrace));
-    const run = judged ?? mine[0]!;
+    const traced = (r: RunRow) => s.jobs.some((j) => j.repo === fullRepo && j.runId === r.runId && j.hasTrace);
+    const named = (h: Hit) => !def.match || h.organ === def.match || h.key.includes(def.match) || h.why.includes(def.match);
+    let run: RunRow;
+    let judged = true;
+    if (def.match && !def.runId) {
+      const found = mine.find((r) => hitsOf(r).some(named));
+      // Without a run id nothing says which run was the replay, so a miss cannot be told from "not run".
+      if (!found) return { ...base, state: "not_seen" };
+      run = found;
+    } else {
+      const j = mine.find((r) => r.verdict || traced(r));
+      judged = !!j;
+      run = j ?? mine[0]!;
+    }
     const row: ReplayRow = { ...base, run };
     const jobs = index.sorted().filter((j) => j.repo === fullRepo && j.runId === run.runId);
-    const jobIds = new Set(jobs.map((j) => j.jobId));
-    const verdict = s.verdicts.find((v) => v.repo === fullRepo && v.runId === run.runId) ?? null;
-    const hit = (organ: string, saw: string) => {
+    const hits = hitsOf(run).filter(named);
+    // The same thing seen in both twins is one line.
+    const seen = new Map<string, { why: string; n: number }>();
+    for (const h of hits) {
+      const organ = h.fails ? h.organ : `${h.organ} (reported, did not stop the run)`;
       if (!row.organs.includes(organ)) row.organs.push(organ);
-      if (row.saw.length < 3 && !row.saw.includes(saw)) row.saw.push(saw);
-    };
-
-    if (verdict?.status === "divergent") for (const d of verdict.divergences) hit("twins", d.why);
-    for (const j of jobs.filter((x) => x.hasTrace)) {
-      const e = index.newEgress(j);
-      if (e.earlierJobs > 0 && e.hosts.length) hit("new egress", `Job "${j.name}" contacted ${e.hosts.join(", ")}, which no earlier job of this repo had.`);
+      const k = `${h.organ}\n${h.key}`;
+      const g = seen.get(k);
+      if (g) g.n++;
+      else seen.set(k, { why: h.why, n: 1 });
     }
-    for (const a of lineage) if (a.repo === fullRepo && (jobIds.has(a.writer.jobId) || a.reader.runId === run.runId)) hit("cache lineage", a.why);
-    for (const d of drift)
-      d.versions.forEach((v, i) => {
-        if (i > 0 && v.firstSeen.repo === fullRepo && v.firstSeen.runId === run.runId) hit("URL-hash drift", `${d.url} returned new bytes (${v.sha256.slice(0, 12)}…) in this run.`);
-      });
-    for (const a of images) if (a.repo === fullRepo && jobIds.has(a.jobId)) hit("image provenance", a.why);
-    for (const n of notFound)
-      if (n.jobs.some((j) => j.repo === fullRepo && j.runId === run.runId)) hit("registry 404s", `A job asked ${n.registry} for "${n.name}", which does not exist.`);
-    if (run.gone && jobs.some((j) => j.hasTrace)) {
-      const n = jobs.reduce((sum, j) => sum + j.keys.length, 0);
-      hit("CRACI trace", `GitHub no longer has this run. CRACI still holds ${n} connection${n === 1 ? "" : "s"} it made.`);
+    for (const g of seen.values())
+      if (row.saw.length < 3) row.saw.push(g.n > 1 ? `${g.why} The same in ${g.n - 1} more job${g.n === 2 ? "" : "s"} of this run.` : g.why);
+    const tracedJobs = jobs.filter((j) => j.hasTrace);
+    if (run.gone && tracedJobs.length) {
+      const n = tracedJobs.reduce((sum, j) => sum + j.keys.length, 0);
+      row.organs.push("CRACI trace");
+      row.saw.unshift(`GitHub no longer has this run. CRACI still holds ${n} connection${n === 1 ? "" : "s"} it made.`);
+      row.saw.length = Math.min(row.saw.length, 3);
     }
 
-    const end = row.organs.includes("twins") || !row.organs.length ? verdict?.createdAt : jobs.map((j) => j.indexedAt).sort().pop();
+    // Time and the job that shows it.
+    const ghJobs = s.github.repos[fullRepo]?.jobs[run.runId] ?? [];
+    const vj = ghJobs.find((j) => /^verdict\b/i.test(j.name) && j.status === "completed" && j.conclusion !== "skipped");
+    row.stopped = vj ? vj.conclusion === "failure" : null;
+    const hitJobs = [...new Set(hits.map((h) => h.jobId))].map((id) => index.getJob(fullRepo, id)).filter((j): j is FleetJob => !!j);
+    const first = hitJobs[0] ?? (run.gone ? tracedJobs[0] : undefined);
+    if (first) row.job = { name: first.name, url: first.url };
+    const lastHit = hitJobs.map((j) => j.completedAt ?? "").sort().pop() || "";
+    const end = vj?.completedAt && lastHit <= vj.completedAt ? vj.completedAt : lastHit || vj?.completedAt || "";
     if (end && run.startedAt) {
       const sec = Math.round((Date.parse(end) - Date.parse(run.startedAt)) / 1000);
       if (Number.isFinite(sec) && sec >= 0) row.seconds = sec;
     }
-    if (row.organs.length) row.state = "caught";
+
+    const verdict = s.verdicts.find((v) => v.repo === fullRepo && v.runId === run.runId) ?? null;
+    if (hits.some((h) => h.fails) || (run.gone && tracedJobs.length)) row.state = "caught";
     else if (!judged && (run.live || (run.status !== null && run.status !== "completed"))) row.state = "running";
-    else if (verdict && verdict.status !== "inconclusive") row.state = "missed";
+    else if ((verdict && verdict.status !== "inconclusive") || (def.runId && tracedJobs.length)) row.state = "missed";
     else row.state = "no_verdict";
     return row;
   });

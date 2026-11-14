@@ -170,8 +170,8 @@ describe("replay scoreboard", () => {
     expect(shai.organs).toContain("twins");
     expect(shai.seconds).toBeGreaterThan(0);
     expect(by.get("cache-poison")!.organs).toEqual(["cache lineage"]);
-    expect(by.get("tag-repoint")!.organs).toEqual(["URL-hash drift"]);
-    expect(by.get("slopsquat")!.organs).toEqual(["registry 404s"]);
+    expect(by.get("tag-repoint")!.organs).toEqual(["same URL, new bytes (reported, did not stop the run)"]);
+    expect(by.get("slopsquat")!.organs).toEqual(["registry 404"]);
     expect(by.get("release-gate")!.state).toBe("not_run");
     expect(by.get("pth")!.state).toBe("not_set_up");
     for (const r of rows.filter((x) => x.state === "not_run" || x.state === "not_set_up")) {

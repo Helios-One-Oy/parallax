@@ -8,6 +8,9 @@ import type { CdxComponent, CycloneDxBom, Divergence, JobRef, NetworkTrace, Verd
 export const FLAP_RULE = "flaps-in-history";
 export const EARLY_RULE = "decoy-stopped-early";
 export const BEFORE_DRESS_RULE = "before-the-twins-differed";
+// A cache one twin restored and the other missed (the twins race for it) is no sign that the fake
+// credentials changed anything. Who wrote the cache is judged by cache lineage (detect.ts).
+export const CACHE_RULE = "came-with-a-cache";
 const DECOY_PHRASE = "the decoy twin, which carries fake publish tokens,";
 
 export type TwinInput = {
@@ -156,10 +159,24 @@ export function diffTwinsDetailed(bare: TwinInput, decoy: TwinInput, history: Hi
     if (bare.sbom && decoy.sbom) {
       const pb = sbomPurls(bare.sbom);
       const pd = sbomPurls(decoy.sbom);
-      for (const [purl, comp] of pd) if (!pb.has(purl)) divergences.push(pkgDivergence("decoy-only", purl, comp, novel("purl", purl)));
+      const repoName = (meta?.repository ?? bare.meta?.repo ?? decoy.meta?.repo ?? "").toLowerCase();
+      const withCache = (purl: string): string | null =>
+        purl.startsWith("pkg:ghacache/")
+          ? "a cache entry only this twin restored; who wrote it is judged by cache lineage"
+          : repoName && purl.toLowerCase().startsWith(`pkg:github/${repoName}@`)
+            ? "another commit of this repository itself, named by a cache only this twin restored"
+            : null;
+      for (const [purl, comp] of pd) {
+        if (pb.has(purl)) continue;
+        const cache = withCache(purl);
+        if (cache) ignored.push({ key: purl, rule: CACHE_RULE, reason: cache, side: "decoy" });
+        else divergences.push(pkgDivergence("decoy-only", purl, comp, novel("purl", purl)));
+      }
       for (const [purl, comp] of pb) {
         if (pd.has(purl)) continue;
-        if (decoyStoppedEarly) ignored.push({ key: purl, rule: EARLY_RULE, reason: "the decoy twin failed before finishing", side: "bare" });
+        const cache = withCache(purl);
+        if (cache) ignored.push({ key: purl, rule: CACHE_RULE, reason: cache, side: "bare" });
+        else if (decoyStoppedEarly) ignored.push({ key: purl, rule: EARLY_RULE, reason: "the decoy twin failed before finishing", side: "bare" });
         else divergences.push(pkgDivergence("bare-only", purl, comp, novel("purl", purl)));
       }
     } else {

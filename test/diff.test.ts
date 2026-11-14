@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BEFORE_DRESS_RULE, diffTwins, diffTwinsDetailed, FLAP_RULE, policySuggestion, type TwinInput } from "../src/diff.ts";
+import { BEFORE_DRESS_RULE, CACHE_RULE, diffTwins, diffTwinsDetailed, FLAP_RULE, policySuggestion, type TwinInput } from "../src/diff.ts";
 import { normalizeTrace } from "../src/normalize.ts";
 import { dressedAt, reachedBuild, renderMarkdown } from "../src/cli.ts";
 import { dnsObs, httpObs, jobRef, npmBuild, sbom, tcpObs, trace } from "./factories.ts";
@@ -19,6 +19,17 @@ const decoyTwin = (obs = npmBuild(), purls = PURLS): TwinInput => ({
 });
 
 describe("diffTwins", () => {
+  test("a cache only one twin restored is not a twin divergence (real run 43622842616)", () => {
+    // The twins race for the cache: the bare twin got a hit, the decoy a miss. CRACI's SBOM then names the
+    // cache entry and the commit of the job that wrote it in one twin only.
+    const cache = ["pkg:ghacache/7493989779944505418/7493989779944505563@c242501c?entry_id=6629298651489501765&key=npm-a41f", "pkg:github/Test-Org/test-web@1eb75e65f3ed"];
+    const d = diffTwinsDetailed(bareTwin(npmBuild(), [...PURLS, ...cache]), decoyTwin());
+    expect(d.verdict.status).toBe("clean");
+    expect(d.verdict.ignored.rules).toContain(CACHE_RULE);
+    // a package of another repository in one twin only still counts
+    expect(diffTwins(bareTwin(), decoyTwin(npmBuild(), [...PURLS, "pkg:github/evil-org/tool@abc"])).status).toBe("divergent");
+  });
+
   test("what one twin did before it was dressed is not counted, what it did after is", () => {
     // Seen in the first real fleet run: the runner checked GitHub's /_dns endpoints in one twin only, at job start.
     // The factory stamps observation i at 10:00:00 + i * 250 ms; the dress step started one second in.

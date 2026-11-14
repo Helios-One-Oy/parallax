@@ -47,10 +47,13 @@ const ringsHref = (seed: string) => `#/rings?seed=${encodeURIComponent(seed)}`;
 
 const VERDICT_WORDS: Record<string, string> = { clean: "clean", divergent: "divergent", inconclusive: "inconclusive" };
 
+/** The twin verdict of a run, then one label per other detector that found something in it. */
 function runChip(r: RunRow): string {
-  if (r.verdict) return `<span class="chip ${r.verdict}">${VERDICT_WORDS[r.verdict]}</span>`;
-  if (r.live || (r.status && r.status !== "completed")) return `<span class="chip running">running</span>`;
-  return `<span class="chip none">no verdict yet</span>`;
+  const others = (r.caughtBy ?? []).filter((o) => o !== "twins").map((o) => `<span class="chip organ">${esc(o)}</span>`).join("");
+  if (r.verdict) return `<span class="chip ${r.verdict}">${VERDICT_WORDS[r.verdict]}</span>${others}`;
+  if (r.live || (r.status && r.status !== "completed")) return `<span class="chip running">running</span>${others}`;
+  if (others) return others;
+  return `<span class="chip none">${r.hasTwins ? "no verdict yet" : "no twins"}</span>`;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -181,6 +184,7 @@ function fleetHtml(s: State): string {
         <li><span class="chip clean">clean</span> both twins made the same connections</li>
         <li><span class="chip divergent">divergent</span> one twin did something the other did not</li>
         <li><span class="chip inconclusive">inconclusive</span> the twins could not be compared</li>
+        <li><span class="chip organ">new egress</span> another detector found something in the run (named on the label)</li>
         <li><span class="chip none">no verdict yet</span></li>
       </ul>
       <div class="repos">${repos || `<p class="empty">The fleet list is empty.</p>`}</div>
@@ -189,11 +193,11 @@ function fleetHtml(s: State): string {
     <section aria-labelledby="h-alerts">
       <h2 id="h-alerts">What the whole fleet shows</h2>
       <div class="alerts">
-        ${alertBlock("New egress", "A job contacted a host that no earlier job of its repo had.", egress, a.jobs)}
+        ${alertBlock("New egress", "A job contacted a host that no earlier job of its repo had. Judged once a repo has three earlier runs.", egress, a.jobs)}
         ${alertBlock("Cache lineage", "A trusted job restored a cache that a job anyone can trigger wrote.", lineage, a.jobs)}
         ${alertBlock("Same URL, new bytes", "A URL that should not change returned different content than before.", drift, a.jobs)}
-        ${alertBlock("Foreign image pulls", "A job pulled one of our image tags and got bytes none of our jobs produced.", images, a.jobs)}
-        ${alertBlock("Registry 404s", "An install asked a registry for a package name that does not exist.", notFound, a.jobs)}
+        ${alertBlock("Image provenance", "A job pulled one of our own images and got bytes none of our jobs produced.", images, a.jobs)}
+        ${alertBlock("Registry 404", "An install asked a registry for a package name that does not exist.", notFound, a.jobs)}
       </div>
     </section>`;
 }
@@ -248,8 +252,45 @@ function verdictHtml(v: RunPayload): string {
       : x.status === "clean"
         ? "Both twins made the same connections."
         : "Parallax could not compare the twins.";
+  const other = [...new Set(v.findings.filter((f) => f.fails).map((f) => f.organ))];
+  const stop = other.length ? `<p class="stop">${x.status === "divergent" ? "Also caught by" : "Caught by"}: ${esc(other.join(", "))}. See below.</p>` : "";
   const sub = `${x.stats.shared} seen in both, bare ${x.stats.bare}, decoy ${x.stats.decoy}. ${x.ignored.count} ignored as noise${x.ignored.rules.length ? ` (${x.ignored.rules.join(", ")})` : ""}. Judged ${ago(x.createdAt)}.`;
-  return `<div class="verdict ${x.status}"><span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span><div><p>${esc(head)}</p><p class="sub">${esc(sub)}</p></div></div>`;
+  return `<div class="verdict ${x.status}"><span class="chip ${x.status}">${VERDICT_WORDS[x.status]}</span><div><p>${esc(head)}</p>${stop}<p class="sub">${esc(sub)}</p></div></div>`;
+}
+
+const CHECK_WORDS: Record<string, string> = { checked: "checked", too_little_history: "not judged", nothing_to_check: "nothing to check" };
+
+/** What the detectors other than the twin diff found for any job of this run, and what each of them looked at. */
+function findingsHtml(v: RunPayload): string {
+  if (!v.findings.length && !v.checks.length) return "";
+  const jobUrl = (id: string) => safeUrl(v.jobs.find((j) => j.id === id)?.url);
+  // The same finding in both twins (or in several jobs) is one entry that lists the jobs.
+  const groups = new Map<string, typeof v.findings>();
+  for (const f of v.findings) {
+    const k = `${f.organ}\n${f.key}`;
+    groups.set(k, [...(groups.get(k) ?? []), f]);
+  }
+  const items = [...groups.values()]
+    .map((g) => {
+      const f = g[0]!;
+      const fails = g.some((x) => x.fails);
+      const jobs = g.map((x) => { const url = jobUrl(x.jobId); return url ? ext(url, `job "${x.jobName}"`) : `job "${esc(x.jobName)}"`; }).join(", ");
+      const seed = f.organ === "new egress" || f.organ === "registry 404" || f.organ === "same URL, new bytes" ? f.host : "";
+      const more = g.length > 1 ? ` The same holds for ${g.length - 1} more job${g.length === 2 ? "" : "s"} of this run.` : "";
+      return `<li class="finding${fails ? " fails" : ""}">
+        <span class="chip organ">${esc(f.organ)}</span> <span class="mono">${esc(f.key)}</span>
+        <p>${esc(f.why)}${more}</p>
+        <p class="meta">${jobs} · ${fails ? "stops the run" : "reported only, does not stop the run"}${seed ? ` · <a href="${esc(ringsHref(seed))}">trace it</a>` : ""}</p>
+        <p class="meta">Evidence: ${esc(f.evidence)}.</p>
+        <p class="meta">Would a CRACI network policy have blocked it? ${esc((f.policy ?? "No. No network rule tells this apart from normal traffic.").replace(/`/g, ""))}</p>
+      </li>`;
+    })
+    .join("");
+  const checks = v.checks.map((c) => `<li><b>${esc(c.organ)}</b> <span class="state ${esc(c.state)}">${esc(CHECK_WORDS[c.state] ?? c.state)}</span> <span>${esc(c.note)}</span></li>`).join("");
+  return `<section aria-labelledby="h-find"><h2 id="h-find">What the other detectors found <span class="n">${groups.size || ""}</span></h2>
+    ${v.findings.length ? `<ul class="rows findings">${items}</ul>` : `<p class="empty">Nothing. Every job of this run was looked at, the release job too.</p>`}
+    ${checks ? `<ul class="checks" aria-label="What each detector looked at">${checks}</ul>` : ""}
+  </section>`;
 }
 
 function runHtml(v: RunPayload): string {
@@ -288,6 +329,7 @@ function runHtml(v: RunPayload): string {
     <p class="lead meta">${meta}</p>
     <div id="run-verdict">${verdictHtml(v)}</div>
     <div id="run-pipe">${pipeHtml(v)}</div>
+    <div id="run-find">${findingsHtml(v)}</div>
     <section aria-labelledby="h-conn"><h2 id="h-conn">Connections of the two twins ${div ? `<span class="n">${plural(div, "divergent line")}</span>` : ""}</h2><div id="run-conn">${table}</div></section>
     <div id="run-pkgs">${pkgs}</div>
     <section aria-labelledby="h-logs"><h2 id="h-logs">Job logs</h2><div class="logs" id="run-logs"></div></section>
@@ -528,23 +570,32 @@ function ringsHtml(p: RingsPayload, seed: string, error: string | null, fenceSta
 
 // ---------- replays ----------
 
-const REPLAY_WORDS: Record<string, string> = { caught: "caught", missed: "missed", running: "running", not_run: "not run", not_set_up: "not set up", no_verdict: "no verdict yet" };
+const REPLAY_WORDS: Record<string, string> = { caught: "caught", missed: "missed", running: "running", not_run: "not run", not_set_up: "not set up", no_verdict: "no verdict yet", not_seen: "not seen yet" };
 
 function replaysHtml(s: State): string {
   const rows = s.replays
     .map((r) => {
       const saw = r.saw.length ? `<ul>${r.saw.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+      const jobUrl = safeUrl(r.job?.url);
       const links = r.run
-        ? `${r.run.pr ? ext(r.run.pr.url, `PR #${r.run.pr.number}`) : ""}<a href="${esc(runHref(r.run.repo, r.run.runId))}">run ${esc(r.run.runId)}</a>`
+        ? `<a href="${esc(runHref(r.run.repo, r.run.runId))}">run ${esc(r.run.runId)}</a>${r.run.gone ? "<span>deleted on GitHub</span>" : ext(r.run.url, "on GitHub")}${r.run.pr ? ext(r.run.pr.url, `PR #${r.run.pr.number}`) : ""}${jobUrl && !r.run.gone ? ext(jobUrl, `CRACI job: ${r.job!.name}`) : ""}`
         : "";
-      const organs = r.organs.length ? esc(r.organs.join(", ")) : "";
-      const where = r.state === "not_set_up" ? "" : `<span>${esc(r.fullRepo ?? "")} · ${esc(r.branch ?? "")}</span>`;
+      const organs = r.organs.length ? esc(r.organs.join(", ")) : r.state === "missed" ? "nothing" : "";
+      const place = [r.fullRepo ?? "", r.branch ?? "", r.workflow ? `workflow ${r.workflow}` : "", !r.branch && r.runId ? `run ${r.runId}` : ""].filter(Boolean).join(" · ");
+      const where = r.state === "not_set_up" ? "" : `<span>${esc(place)}</span>`;
+      const stopped =
+        r.state !== "caught" || r.stopped === null
+          ? ""
+          : r.stopped
+            ? `<span class="note">The run's verdict job failed. The release job did not start.</span>`
+            : `<span class="note">Seen after the run. Its own verdict job had passed.</span>`;
+      const unseen = r.state === "not_seen" ? `<span class="note">No run in this repo shows it yet.</span>` : "";
       return `<tr>
         <td class="inc"><b>${esc(r.incident)}</b><span>${esc(r.how)}</span>${where}</td>
-        <td><span class="chip ${r.state}">${REPLAY_WORDS[r.state]}</span></td>
-        <td class="organ${organs ? "" : " dim"}" data-l="Caught by">${organs}</td>
+        <td class="res"><span class="chip ${r.state}">${REPLAY_WORDS[r.state]}</span>${stopped}${unseen}</td>
+        <td class="organ${r.organs.length ? "" : " dim"}" data-l="Caught by">${organs}<span class="note">expected: ${esc(r.expected)}</span></td>
         <td class="saw${saw ? "" : " dim"}" data-l="What Parallax saw">${saw}</td>
-        <td class="dim" data-l="Time to verdict">${esc(duration(r.seconds))}</td>
+        <td class="dim" data-l="Push to verdict">${esc(duration(r.seconds))}</td>
         <td class="links">${links}</td>
       </tr>`;
     })
@@ -552,10 +603,10 @@ function replaysHtml(s: State): string {
   const ran = s.replays.filter((r) => r.run).length;
   const caught = s.replays.filter((r) => r.state === "caught").length;
   const missed = s.replays.filter((r) => r.state === "missed").length;
-  const sum = ran ? `${caught} caught, ${missed} missed, ${s.replays.length - ran} not run yet.` : "None has run yet.";
+  const sum = ran ? `${caught} caught, ${missed} missed, ${s.replays.length - ran} not run or not seen yet.` : "None has run yet.";
   return `<h1 class="plain">This year's real attacks, replayed on the fleet</h1>
-    <p class="lead">Each replay is a pull request with a harmless simulation of one real attack. The row fills in from the real run: what Parallax saw, what caught it, how long it took. A miss is shown as a miss. ${esc(sum)}</p>
-    ${s.replays.length ? `<table class="board"><thead><tr><th>Attack and simulation</th><th>Result</th><th>Caught by</th><th>What Parallax saw</th><th>Time to verdict</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">No replays are defined.</p>`}`;
+    <p class="lead">Each replay is a harmless simulation of one real attack, run in a fleet repo. The row fills in from the real run: what Parallax saw, which detector caught it, how long it took from the push. A miss is shown as a miss. ${esc(sum)}</p>
+    ${s.replays.length ? `<table class="board"><thead><tr><th>Attack and simulation</th><th>Result</th><th>Caught by</th><th>What Parallax saw</th><th>Push to verdict</th><th>Run and CRACI job</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">No replays are defined.</p>`}`;
 }
 
 // ---------- router ----------
@@ -632,7 +683,7 @@ function renderRun() {
   } else {
     const tmp = document.createElement("div");
     tmp.innerHTML = runHtml(runData);
-    for (const id of ["run-verdict", "run-pipe", "run-conn", "run-pkgs", "run-seeds"]) {
+    for (const id of ["run-verdict", "run-pipe", "run-find", "run-conn", "run-pkgs", "run-seeds"]) {
       const a = document.getElementById(id);
       const b = tmp.querySelector(`#${id}`);
       if (a && b && a.innerHTML !== b.innerHTML) a.innerHTML = b.innerHTML;

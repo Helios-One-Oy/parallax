@@ -1,7 +1,7 @@
 // Fleet index: one record per finished job of the fleet repos, persisted as JSON lines.
 // Answers: when was a host / package / body hash first seen, which URLs changed their bytes,
 // which registry names did not exist, which hosts are new for a repo.
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CraciClient } from "./craci.ts";
 import { sbomPurls, type FleetLookup } from "./diff.ts";
@@ -187,14 +187,35 @@ export class FleetIndex implements FleetLookup {
     await this.append("artifacts.jsonl", a);
   }
 
-  /** Rewrite the files with one line per record (appends leave old versions behind). */
+  /**
+   * Rewrite the files with one line per record (appends leave old versions behind). Several processes
+   * write this index (the console's sync, `cli sync`), so what another one appended since this one
+   * loaded is read back first and kept: for a record both hold, the newer one wins.
+   */
   async compact() {
     if (!this.dir) return;
     await mkdir(this.dir, { recursive: true });
+    for (const j of await readLines<FleetJob>(join(this.dir, "jobs.jsonl"))) {
+      const mine = this.jobs.get(jobKey(j.repo, j.jobId));
+      if (!mine || ((j.v ?? 0) >= (mine.v ?? 0) && j.indexedAt > mine.indexedAt)) this.jobs.set(jobKey(j.repo, j.jobId), j);
+    }
+    for (const c of await readLines<CacheRecord>(join(this.dir, "caches.jsonl"))) {
+      const mine = this.caches.get(`${c.repo}#${c.id}`);
+      if (!mine || (!mine.provenance && c.provenance)) this.caches.set(`${c.repo}#${c.id}`, c);
+    }
+    for (const a of await readLines<PreviewArtifactProvenance>(join(this.dir, "artifacts.jsonl"))) {
+      const mine = this.artifacts.get(a.digest);
+      if (!mine || (mine.unknown_to_craci && !a.unknown_to_craci)) this.artifacts.set(a.digest, a);
+    }
     const dump = (rows: Iterable<unknown>) => [...rows].map((r) => JSON.stringify(r) + "\n").join("");
-    await writeFile(join(this.dir, "jobs.jsonl"), dump(this.jobs.values()));
-    await writeFile(join(this.dir, "caches.jsonl"), dump(this.caches.values()));
-    await writeFile(join(this.dir, "artifacts.jsonl"), dump(this.artifacts.values()));
+    const put = async (file: string, text: string) => {
+      const tmp = join(this.dir!, `.${file}.${process.pid}.tmp`);
+      await writeFile(tmp, text);
+      await rename(tmp, join(this.dir!, file));
+    };
+    await put("jobs.jsonl", dump(this.jobs.values()));
+    await put("caches.jsonl", dump(this.caches.values()));
+    await put("artifacts.jsonl", dump(this.artifacts.values()));
   }
 
   private async append(file: string, row: unknown) {

@@ -93,8 +93,16 @@ export async function buildFixtureDir(dir: string): Promise<{ dir: string }> {
     return { verdict: d.verdict, failed };
   }
 
+  // 0. Two older pushes to main, so the repo has enough history for "new egress" to be judged.
+  let s: Step = { repo: WEB, run: "8998", branch: "main", event: "push", minute: -50, title: "Carrier list: paging" };
+  await job(s, "lint", npmBuild(), CLEAN, logLines("Run npm ci"));
+  run(s);
+  s = { repo: WEB, run: "8999", branch: "main", event: "push", minute: -40, title: "Carrier list: filters" };
+  await job(s, "lint", npmBuild(), CLEAN, logLines("Run npm ci"));
+  run(s);
+
   // 1. A clean push to main: the release job runs and saves the cache.
-  let s: Step = { repo: WEB, run: RUNS.clean, branch: "main", event: "push", minute: 0, title: "Shipment list: sort by ETA" };
+  s = { repo: WEB, run: RUNS.clean, branch: "main", event: "push", minute: 0, title: "Shipment list: sort by ETA" };
   await twins(s, {});
   await job(s, "release", npmBuild(), CLEAN, logLines("Run actions/cache@v4", "Cache not found for input keys: npm-linux-abc", "Run npm ci", "Cache saved with key: npm-linux-abc"), { offset: 5 });
   run(s);

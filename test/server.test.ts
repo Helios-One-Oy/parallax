@@ -281,7 +281,9 @@ describe("replays.json", () => {
     for (const r of real) {
       expect(r.incident.length).toBeGreaterThan(3);
       if (r.repo !== null) expect(r.repo).not.toContain("/");
-      expect((r.repo === null) === (r.branch === null)).toBe(true);
+      // a replay with a repo says where in it: a branch, a run, a workflow, an event or a finding to look for
+      const where = [r.branch, r.runId, r.workflow, r.event, r.match].filter(Boolean).length;
+      expect(r.repo === null ? where === 0 : where > 0).toBe(true);
     }
     const rows = (await (await get(createApp({ mode: "public", replays: real, initial: await emptySnapshot() }), "/api/state")).json() as any).replays;
     expect(rows.every((r: any) => r.state === "not_run" || r.state === "not_set_up")).toBe(true);

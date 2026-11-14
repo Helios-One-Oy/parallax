@@ -92,7 +92,20 @@ section > h2 + * { margin-top: 14px; }
 .chip.divergent, .chip.missed { background: var(--alarm); border-color: var(--alarm); color: #fff; }
 .chip.caught { background: var(--ink); color: var(--paper); }
 .chip.inconclusive, .chip.no_verdict { border-style: dashed; border-color: var(--ink-3); color: var(--ink-2); }
-.chip.none, .chip.not_run, .chip.not_set_up { border-color: var(--line); color: var(--ink-3); }
+.chip.none, .chip.not_run, .chip.not_set_up, .chip.not_seen { border-color: var(--line); color: var(--ink-3); }
+.chip.organ { border-color: var(--alarm); color: var(--alarm); }
+.chips { flex-wrap: wrap; row-gap: 4px; }
+
+/* findings of the other detectors (run page) */
+.findings .finding { padding: 14px 0; }
+.findings .finding .mono { overflow-wrap: anywhere; }
+.findings .finding p { margin: 6px 0 0; max-width: 78ch; }
+.findings .finding .meta { color: var(--ink-3); font-size: 0.875rem; }
+.verdict .stop { color: var(--alarm); font-weight: 500; margin-top: 4px; }
+.checks { list-style: none; padding: 0; margin: 18px 0 0; font-size: 0.875rem; color: var(--ink-2); display: grid; gap: 6px; }
+.checks b { font-weight: 500; color: var(--ink); }
+.checks .state { color: var(--ink-3); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 0.75rem; white-space: nowrap; }
+.checks .state.too_little_history { border-style: dashed; color: var(--ink-2); }
 .chip.running::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ink); animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
 .legend { margin: 14px 0 26px; display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--ink-2); font-size: 0.875rem; }
@@ -250,6 +263,8 @@ a.run:hover { background: var(--panel); }
 .board .links a { display: block; white-space: nowrap; }
 .board .dim { color: var(--ink-3); }
 .board .organ { font-weight: 500; }
+.board .note { display: block; font-weight: 400; color: var(--ink-3); font-size: 0.8125rem; margin-top: 4px; max-width: 30ch; }
+.board .links span { display: block; color: var(--ink-3); font-size: 0.875rem; }
 @media (max-width: 900px) {
   .board, .board tbody, .board tr, .board td { display: block; }
   .board thead { display: none; }

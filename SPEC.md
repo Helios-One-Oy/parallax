@@ -19,6 +19,7 @@ When something is caught, CRACI's cache and image provenance tell us where it al
 | Console | `src/server.ts`, `ui/` | Live fleet view, twin view, rings, replay scoreboard. |
 | Specimens | `specimens/` | Harmless simulated malicious packages (see safety rules). |
 | Sink | `sink/` | Our own endpoint the specimens call, plus a static registry that serves the specimen tarballs. Deployed on Fly as `parallax-sink`. |
+| Fix loop | `src/fix/` | `bun src/fix/cli.ts propose|verify|list`. Reads the advisories in a job's CRACI bill of materials, hands CRACI's fix prompt to an agent, gates what the agent changed, opens a pull request, and comments with what the pull request's own build proves. Records in `/bulk3/runs/craci/fixes/fixes.jsonl`. |
 | Fleet | `../fleet/web`, `../fleet/api`, `../fleet/base` | Demo repos (`Helios-One-Oy/parallax-demo-web|api|base`) whose CI runs on `runs-on: craci`. Attack replays are pull requests in them. |
 
 ## Safety rules for specimens (not negotiable)
@@ -80,6 +81,19 @@ Each replay is a pull request in a fleet repo. Scoreboard columns: incident, how
 | `time-bomb` | dormant payloads (XZ-style patience) | fires only after a date | future-clock twin (stretch) |
 | `log-wipe` | wfx-loot, 10–12 Nov 2026 | workflow posts to a raw IP then the run is deleted | CRACI trace survives off GitHub |
 | `slopsquat` | hallucinated package names, 2026 | install asks the registry for a name that does not exist | registry 404s pooled across the fleet |
+
+## Fixes that have to prove themselves (CRACI "AI fixes")
+
+In CRACI, "AI fixes" is the **Copy fix prompt** button on a job page (menu: critical and high, or all severities). It copies an audit brief built from the job's advisories; it is not in the public API. The same advisories are in the job's bill of materials (`vulnerabilities[]`, source OSV), which the API does give.
+
+A fix bot is the fastest way to install a hijacked release, so Parallax treats the agent like any other dependency: measured, not trusted.
+
+1. `propose`: advisories from the bill of materials of the newest `build (bare)` job on the default branch; fixed versions from each advisory's OSV record; the agent (Fable 5.2 through the seat pool) gets CRACI's prompt plus our rules and works in a throwaway checkout where it can only edit `package.json` and run npm against the lockfile with install scripts off.
+2. The gate reads what the agent left behind, not what it says: only `package.json` and `package-lock.json` changed, no new download host in the lockfile, no version younger than 72 hours (public registry publish times). Anything else is refused and nothing is pushed.
+3. The pull request is built like every other change: twins on CRACI, verdict.
+4. `verify`: the bill of materials of the pull request's own `build (bare)` job against the base job's. "Proven" needs every targeted advisory gone from that build, nothing critical or high new, all jobs passed and the twins agreeing. The result is a comment on the pull request.
+
+Run it on the box: `PLX_AGENT_BASE_URL=http://127.0.0.1:8317 hsec exec --only CLIPROXY_API_KEY -- bun src/fix/cli.ts propose --repo O/R --craci-prompt FILE` (FILE = the prompt copied from the CRACI job page; without it the brief is built from the bill of materials alone).
 
 ## What the first real runs taught us (14 Nov, evening)
 

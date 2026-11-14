@@ -62,7 +62,7 @@
     {
       "id": "log-wipe",
       "incident": "wfx-loot, 10 to 12 Nov 2026",
-      "how": "A workflow posts to a raw IP, then the run is deleted.",
+      "how": "A workflow posts to a hard-coded IP address, then the run is deleted.",
       "expected": "CRACI trace",
       "repo": "parallax-demo-web",
       "workflow": "ops-report"

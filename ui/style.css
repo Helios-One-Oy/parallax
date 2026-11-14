@@ -93,7 +93,7 @@ section > h2 + * { margin-top: 14px; }
 .chip.caught { background: var(--ink); color: var(--paper); }
 .chip.inconclusive, .chip.no_verdict { border-style: dashed; border-color: var(--ink-3); color: var(--ink-2); }
 .chip.none, .chip.not_run, .chip.not_set_up, .chip.not_seen { border-color: var(--line); color: var(--ink-3); }
-.chip.organ { border-color: var(--alarm); color: var(--alarm); }
+.chip.organ, .chip.kept { border-color: var(--alarm); color: var(--alarm); }
 .chips { flex-wrap: wrap; row-gap: 4px; }
 
 /* findings of the other detectors (run page) */

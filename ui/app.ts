@@ -285,7 +285,7 @@ function verdictHtml(v: RunPayload): string {
       const text = v.run.gone
         ? `GitHub no longer has this run. CRACI still holds the ${plural(kept, "connection")} it made.`
         : `This run has no twin jobs, so there is no verdict. CRACI recorded the ${plural(kept, "connection")} it made.`;
-      return `<div class="verdict"><span class="chip ${v.run.gone ? "caught" : "none"}">${v.run.gone ? "kept by CRACI" : "no twins"}</span><div><p>${esc(text)}</p><p class="sub">They are listed below.</p></div></div>`;
+      return `<div class="verdict"><span class="chip ${v.run.gone ? "kept" : "none"}">${v.run.gone ? "kept by CRACI" : "no twins"}</span><div><p>${esc(text)}</p><p class="sub">They are listed below.</p></div></div>`;
     }
     const text = running ? "The twins are running. The verdict comes when both have finished." : v.run.hasTwins ? "No verdict yet for this run." : "This run has no twin jobs, so there is no verdict.";
     return `<div class="verdict"><span class="chip ${running ? "running" : "none"}">${running ? "running" : v.run.hasTwins ? "no verdict yet" : "no twins"}</span><div><p>${esc(text)}</p></div></div>`;
@@ -348,7 +348,7 @@ function findingsHtml(v: RunPayload): string {
     .join("");
   const checks = v.checks.map((c) => `<li><b>${esc(c.organ)}</b> <span class="state ${esc(c.state)}">${esc(CHECK_WORDS[c.state] ?? c.state)}</span> <span>${esc(c.note)}</span></li>`).join("");
   return `<section aria-labelledby="h-find"><h2 id="h-find">What the other detectors found <span class="n">${groups.size || ""}</span></h2>
-    ${v.findings.length ? `<ul class="rows findings">${items}</ul>` : `<p class="empty">Nothing. Every job of this run was looked at, the release job too.</p>`}
+    ${v.findings.length ? `<ul class="rows findings">${items}</ul>` : `<p class="empty">${v.run.gone ? "Nothing. No detector fired on this run. What it did is in the connections and the log that CRACI kept, below." : "Nothing. Every job of this run was looked at, the release job too."}</p>`}
     ${checks ? `<ul class="checks" aria-label="What each detector looked at">${checks}</ul>` : ""}
   </section>`;
 }
@@ -650,7 +650,7 @@ function ringsHtml(p: RingsPayload, seed: string, error: string | null, fenceSta
 
 // ---------- replays ----------
 
-const REPLAY_WORDS: Record<string, string> = { caught: "caught", missed: "missed", running: "running", not_run: "not run", not_set_up: "not set up", no_verdict: "no verdict yet", not_seen: "not seen yet" };
+const REPLAY_WORDS: Record<string, string> = { caught: "caught", kept: "kept by CRACI", missed: "missed", running: "running", not_run: "not run", not_set_up: "not set up", no_verdict: "no verdict yet", not_seen: "not seen yet" };
 
 function replaysHtml(s: State): string {
   const rows = s.replays
@@ -683,10 +683,11 @@ function replaysHtml(s: State): string {
   const ran = s.replays.filter((r) => r.run).length;
   const caught = s.replays.filter((r) => r.state === "caught").length;
   const missed = s.replays.filter((r) => r.state === "missed").length;
+  const kept = s.replays.filter((r) => r.state === "kept").length;
   const rest = s.replays.length - ran;
   const inTime = s.replays.filter((r) => r.state === "caught" && r.stopped).length;
   const sum = ran
-    ? `${caught} caught, ${missed} missed${rest ? `, ${rest} not run or not seen yet` : ""}.${inTime && inTime < caught ? ` ${inTime} of the ${caught} were stopped in their own run, before the release job.` : ""}`
+    ? `${caught} caught, ${missed} missed${kept ? `, ${kept} kept by CRACI after its run was deleted on GitHub` : ""}${rest ? `, ${rest} not run or not seen yet` : ""}.${inTime && inTime < caught ? ` ${inTime} of the ${caught} were stopped in their own run, before the release job.` : ""}`
     : "None has run yet.";
   return `<h1 class="plain">Real attacks, replayed on the fleet</h1>
     <p class="lead">Each replay is a harmless simulation of one real attack, run in a fleet repo. The row fills in from the real run: what Parallax saw, which detector caught it, how long it took from the push. A miss is shown as a miss. ${esc(sum)}</p>

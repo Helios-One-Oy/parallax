@@ -638,7 +638,7 @@ export type ReplayDef = {
 export type ReplayRow = ReplayDef & {
   /** Full OWNER/REPO from the fleet list, when the replay's repo is in the fleet. */
   fullRepo: string | null;
-  state: "not_set_up" | "not_run" | "not_seen" | "running" | "no_verdict" | "caught" | "missed";
+  state: "not_set_up" | "not_run" | "not_seen" | "running" | "no_verdict" | "caught" | "kept" | "missed";
   run: RunRow | null;
   organs: string[];
   saw: string[];
@@ -729,7 +729,9 @@ export function replayRows(s: Snapshot, defs: ReplayDef[]): ReplayRow[] {
     }
 
     const verdict = s.verdicts.find((v) => v.repo === fullRepo && v.runId === run.runId) ?? null;
-    if (hits.some((h) => h.fails) || (run.gone && tracedJobs.length)) row.state = "caught";
+    if (hits.some((h) => h.fails)) row.state = "caught";
+    // No detector fired: the run is known only because CRACI kept it after GitHub lost it.
+    else if (run.gone && tracedJobs.length) row.state = "kept";
     else if (!judged && (run.live || (run.status !== null && run.status !== "completed"))) row.state = "running";
     else if ((verdict && verdict.status !== "inconclusive") || (def.runId && tracedJobs.length)) row.state = "missed";
     else row.state = "no_verdict";

@@ -27,10 +27,10 @@ Harmless copies of real attacks, run in our demo repos. Every row on the Replays
 | tj-actions (same URL, new content) | caught, after the run | response hash in the trace | 40 s |
 | KICS (base image tag moved) | caught | image provenance | 21 s |
 | Hallucinated package name | caught | registry 404 in the trace | 97 s |
-| Workflow deleted from GitHub after it ran | caught | CRACI still holds its 14 connections and its log | |
+| Workflow deleted from GitHub after it ran | kept by CRACI | no detector: CRACI still holds its 14 connections and its log | |
 | Dormant payload (waits for a date) | missed | | |
 
-Five of the eight were stopped in their own run, before the release job. Of the first 55 twin builds 50 came out clean, 4 were the two hiding packages (each pushed twice) and 1 was a false alarm, which is now a rule: what a twin does before it is dressed is ignored.
+Five of the seven caught were stopped in their own run, before the release job. Of the first 55 twin builds 50 came out clean, 4 were the two hiding packages (each pushed twice) and 1 was a false alarm, which is now a rule: what a twin does before it is dressed is ignored.
 
 ## Add it to a repo
 

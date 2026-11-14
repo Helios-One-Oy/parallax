@@ -10,6 +10,8 @@ import { buildBrief, judgeChange, renderPrBody, renderProof } from "../../src/fi
 import type { FixDeps, Workspace } from "../../src/fix/run.ts";
 import { proposeFix, publishFix, readFixes, verifyFix } from "../../src/fix/run.ts";
 import { agesOf, fixedVersion } from "../../src/fix/sources.ts";
+import { fixRows } from "../../src/fix/view.ts";
+import { fixesHtml } from "../../ui/fixes.ts";
 import type { CycloneDxBom } from "../../src/types.ts";
 
 const NOW = Date.parse("2026-11-14T18:00:00Z");
@@ -344,6 +346,33 @@ describe("a fix that has to prove itself", () => {
     expect(r.status).toBe("partly-proven");
     expect(renderProof(r)).toStartWith("**Proven for 1 of 2.** Those are gone from the build and the twins found nothing. 1 is still in it.");
     expect(renderProof(r)).not.toContain("Why not:");
+  });
+
+  test("the console row is built from the records: outcome per advisory, counts before and after", async () => {
+    const f = await fake({ agentWrites: goodFix, after: bom([["GHSA-bbbb-bbbb-bbbb", "high", "pkg:npm/%40scope/runner@2.1.12"]]) });
+    const dry = await proposeFix({ repo: "acme/web", dryRun: true }, f.deps);
+    expect(fixRows([dry])[0]).toMatchObject({ status: "proposed", headline: "Passed the gate. Not pushed yet.", proof: null });
+    expect(fixRows([dry])[0]!.advisories.map((a) => a.outcome)).toEqual(["not_measured", "not_measured"]);
+    await publishFix({ id: dry.id }, f.deps);
+    const done = await verifyFix({ repo: "acme/web", pr: 7 }, f.deps);
+    const rows = fixRows([done]);
+    expect(rows[0]).toMatchObject({ status: "partly-proven", headline: "Proven for 1 of 2. 1 still in the build.", pr: { number: 7 } });
+    expect(rows[0]!.advisories.map((a) => [a.package, a.outcome])).toEqual([
+      ["poolio", "gone"],
+      ["@scope/runner", "still_there"],
+    ]);
+    expect(rows[0]!.counts).toEqual([
+      { severity: "critical", before: 1, after: 0 },
+      { severity: "high", before: 1, after: 1 },
+      { severity: "medium", before: 1, after: 0 },
+      { severity: "unknown", before: 1, after: 0 },
+    ]);
+    expect(rows[0]!.change).toMatchObject({ changed: 2, added: 1, removed: 0, moved: [{ name: "poolio", from: "1.1.1", to: "2.1.1" }, { name: "@scope/runner", from: "2.1.9", to: "2.1.12" }] });
+    const html = fixesHtml(rows, { esc: (x) => String(x ?? "").replace(/</g, "&lt;"), ext: (_u, l) => l, ago: () => "now" });
+    expect(html).toContain("Proven for 1 of 2. 1 still in the build.");
+    expect(html).toContain("still in the build</span>");
+    // A dry run that was never pushed drops out once the repo has a pushed fix.
+    expect(fixRows([dry, done]).map((r) => r.status)).toEqual(["partly-proven"]);
   });
 
   test("the texts say where the numbers come from", () => {

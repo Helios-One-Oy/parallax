@@ -18,7 +18,7 @@ CRACI records every connection and every package of both. We compare the two tra
 
 We tried it on two harmless packages of our own that hide this way. One fires only when it finds an npm token, which is what the Shai-Hulud worm needed to spread. The other fires only on a release tag. Both were stopped, 53 and 51 seconds after the push.
 
-Honest builds differ a little too. A URL that comes and goes in the repo's own history is ignored, and so is anything a twin did before it was dressed. Of the first 43 twin builds 38 came out clean and 4 were the two hiding packages, each pushed twice. One was a false alarm: the runner itself called GitHub in only one twin before the build began, and that is why what happens before the dressing is ignored. The second twin doubles the build. In our demo repos that is 13 to 26 seconds of runner time per push.
+Honest builds differ a little too. A URL that comes and goes in the repo's own history is ignored, and so is anything a twin did before it was dressed. Of the first 43 twin builds 38 came out clean and 4 were the two hiding packages, each pushed twice. One was a false alarm: the runner itself called GitHub in only one twin before the build began, and that is why what happens before the dressing is ignored. The second twin doubles the build. In our demo repos that is 13 to 36 seconds of runner time per push.
 
 Most attacks don't bother to hide, and for those we use what else CRACI knows about a build. We replayed seven as harmless copies in our demo repos and caught six. The one that got past us is a time bomb, a package that does nothing until a set date.
 

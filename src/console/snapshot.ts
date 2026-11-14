@@ -7,6 +7,8 @@ import { dirname, join } from "node:path";
 import { CraciClient, readCraciToken } from "../craci.ts";
 import { policySuggestion } from "../diff.ts";
 import { FleetIndex, loadFleetRepos, type CacheRecord, type FleetJob } from "../fleet.ts";
+import { readFixes } from "../fix/run.ts";
+import { fixRows, type FixRow } from "../fix/view.ts";
 import { normalizeTrace } from "../normalize.ts";
 import { apiCacheDir, assertId, assertRepo, fleetDir, runsDir, verdictsDir } from "../paths.ts";
 import type { JobSummary, NetworkTrace, PreviewArtifactProvenance, Verdict } from "../types.ts";
@@ -85,6 +87,8 @@ export type Snapshot = {
   policies: Record<string, string>;
   /** `repo#jobId` of finished job logs the box holds. */
   logs: string[];
+  /** Dependency fixes an agent proposed, and what each one's own build proved. Absent in older snapshots. */
+  fixes?: FixRow[];
 };
 
 export const runKey = (repo: string, runId: string | number) => `${repo}#${runId}`;
@@ -274,6 +278,7 @@ export async function buildSnapshot(o: BuildOptions = {}): Promise<Snapshot> {
     activeAt: activeDoc?.at ?? null,
     policies,
     logs: [...logs].sort(),
+    fixes: fixRows(await readFixes(join(runsDir(), "fixes", "fixes.jsonl"))).filter((f) => repos.includes(f.repo)),
   };
 }
 

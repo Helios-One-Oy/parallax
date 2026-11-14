@@ -327,6 +327,7 @@ export function createApp(o: AppOptions) {
           lastContact: o.mode === "public" ? lastContact : fleet.generatedAt,
           fleet,
           replays: replayRows(s, replays),
+          fixes: s.fixes ?? [],
         };
         const text = JSON.stringify(payload);
         const etag = `"${new Bun.CryptoHasher("sha1").update(text).digest("hex")}"`;

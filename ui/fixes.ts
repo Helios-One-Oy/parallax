@@ -69,25 +69,3 @@ export function fixesHtml(rows: FixRow[], h: Helpers): string {
     <p class="lead">CRACI lists the known advisories of every job and writes a fix prompt for them. Parallax hands that prompt to an agent, and then does not believe the agent: its change must pass a gate (only the manifest and lockfile, no new download host, no release younger than 72 hours), the twins build it like any other change, and the bill of materials of that build decides what is really gone.</p>
     ${rows.length ? rows.map((r) => fixHtml(r, h)).join("") : `<p class="empty">No fix has been proposed yet.</p>`}`;
 }
-
-/** Appended to the console's stylesheet. Uses the console's own tokens. */
-export const FIXES_CSS = `
-.fix { margin-top: 36px; border-top: 1px solid var(--line-2); padding-top: 20px; }
-.fix header h2 { margin-top: 10px; font-size: 1.375rem; font-weight: 600; }
-.fix-body { margin-top: 18px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 24px 48px; }
-.fix-adv > li { display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 4px 16px; padding: 12px 0; align-items: start; }
-.fix-adv .what > span { display: block; }
-.fix-adv .what > .meta:first-of-type { display: inline; }
-.fix-change { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.fix-why { margin-top: 12px; padding-left: 18px; color: var(--alarm-ink); }
-.fix-counts { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
-.fix-counts th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 0.875rem; padding: 0 0 6px; }
-.fix-counts td { padding: 6px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
-.fix-counts td + td, .fix-counts th + th { text-align: right; width: 64px; }
-.fix .links { margin-top: 16px; display: grid; gap: 6px; font-size: 0.9375rem; }
-.chip.fix-gone, .chip.fix-proven { border-color: var(--ink); color: var(--ink); }
-.chip.fix-still_there, .chip.fix-refused, .chip.fix-not-proven, .chip.fix-agent-failed { border-color: var(--alarm); color: var(--alarm-ink); }
-.chip.fix-not_measured, .chip.fix-proposed, .chip.fix-no-change, .chip.fix-nothing-to-fix { border-style: dashed; color: var(--ink-2); }
-.chip.fix-partly-proven { border-color: var(--ink); color: var(--ink); }
-@media (max-width: 760px) { .fix-body { grid-template-columns: 1fr; } .fix-adv > li { grid-template-columns: 1fr; } }
-`;

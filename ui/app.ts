@@ -1,11 +1,14 @@
 // Parallax console, browser side. Plain TypeScript, no framework. Everything shown comes from /api/*.
 import type { FleetView, ReplayRow, RingsView, RunRow, RunView, Seed, TwinJob, TwinRow } from "../src/console/views.ts";
+import type { FixRow } from "../src/fix/view.ts";
+import { fixesHtml } from "./fixes.ts";
 
 type State = {
   config: { mode: "box" | "public"; fixture: boolean; allowFence: boolean; liveLogs: boolean };
   lastContact: string | null;
   fleet: FleetView;
   replays: ReplayRow[];
+  fixes?: FixRow[];
 };
 type RunPayload = RunView & { liveLogs: boolean };
 type RingsPayload = (RingsView & { allowFence: boolean }) | { seed: ""; rings: null; suggestions: Seed[]; jobs: number; allowFence: boolean };
@@ -611,13 +614,14 @@ function replaysHtml(s: State): string {
 
 // ---------- router ----------
 
-type Route = { view: "fleet" } | { view: "replays" } | { view: "rings"; seed: string } | { view: "run"; repo: string; runId: string } | { view: "lost" };
+type Route = { view: "fleet" } | { view: "replays" } | { view: "fixes" } | { view: "rings"; seed: string } | { view: "run"; repo: string; runId: string } | { view: "lost" };
 
 function parseRoute(): Route {
   const h = location.hash.replace(/^#/, "") || "/";
   const [path, query = ""] = h.split("?");
   if (path === "/" || path === "") return { view: "fleet" };
   if (path === "/replays") return { view: "replays" };
+  if (path === "/fixes") return { view: "fixes" };
   if (path === "/rings") return { view: "rings", seed: new URLSearchParams(query).get("seed") ?? "" };
   const m = /^\/run\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(\d+)$/.exec(path!);
   if (m) return { view: "run", repo: m[1]!, runId: m[2]! };
@@ -639,7 +643,7 @@ function setNav() {
     if (a.dataset.nav === cur) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  document.title = { fleet: "Parallax", replays: "Replays · Parallax", rings: "Rings · Parallax", run: "Twins · Parallax", lost: "Parallax" }[route.view];
+  document.title = { fleet: "Parallax", replays: "Replays · Parallax", fixes: "Fixes · Parallax", rings: "Rings · Parallax", run: "Twins · Parallax", lost: "Parallax" }[route.view];
 }
 
 let painted = "";
@@ -658,6 +662,7 @@ function render() {
   }
   if (route.view === "fleet") paint(fleetHtml(state));
   else if (route.view === "replays") paint(replaysHtml(state));
+  else if (route.view === "fixes") paint(fixesHtml(state.fixes ?? [], { esc, ext, ago }));
   else if (route.view === "lost") paint(`<h1 class="plain">There is no such page.</h1><p class="lead"><a href="#/">Back to the fleet</a></p>`);
   else if (route.view === "rings") {
     if (!ringsData && !ringsError) paint(`<p class="loading">Loading</p>`);

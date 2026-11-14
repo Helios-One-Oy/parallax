@@ -127,6 +127,8 @@ export function createApp(o: AppOptions) {
     return live ? { jobs: live.jobs, at: live.iso } : null;
   }
 
+  let stateMemo: { snap: Snapshot; liveAt: string | null; contact: string | null; text: string; etag: string } | null = null;
+
   // ---------- helpers ----------
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...SECURITY, ...extra } });
@@ -339,16 +341,20 @@ export function createApp(o: AppOptions) {
       if (path === "/api/state") {
         const s = await current();
         const act = await liveActive();
-        const fleet = fleetView(s, { live: act?.jobs, liveAt: act?.at });
-        const payload = {
-          config: { mode: o.mode, fixture, allowFence, liveLogs: !!o.craci },
-          lastContact: o.mode === "public" ? lastContact : fleet.generatedAt,
-          fleet,
-          replays: replayRows(s, replays),
-          fixes: s.fixes ?? [],
-        };
-        const text = JSON.stringify(payload);
-        const etag = `"${new Bun.CryptoHasher("sha1").update(text).digest("hex")}"`;
+        // Every open page asks every 3 s: the answer is built once per snapshot, live list and contact time.
+        if (!stateMemo || stateMemo.snap !== s || stateMemo.liveAt !== (act?.at ?? null) || stateMemo.contact !== lastContact) {
+          const fleet = fleetView(s, { live: act?.jobs, liveAt: act?.at });
+          const payload = {
+            config: { mode: o.mode, fixture, allowFence, liveLogs: !!o.craci },
+            lastContact: o.mode === "public" ? lastContact : fleet.generatedAt,
+            fleet,
+            replays: replayRows(s, replays),
+            fixes: s.fixes ?? [],
+          };
+          const built = JSON.stringify(payload);
+          stateMemo = { snap: s, liveAt: act?.at ?? null, contact: lastContact, text: built, etag: `"${new Bun.CryptoHasher("sha1").update(built).digest("hex")}"` };
+        }
+        const { text, etag } = stateMemo;
         if (req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers: { etag, ...SECURITY } });
         return new Response(text, { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-cache", etag, ...SECURITY } });
       }

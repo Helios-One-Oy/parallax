@@ -50,6 +50,9 @@ function fixHtml(f: FixRow, { esc, ext, ago }: Helpers): string {
   ]
     .filter(Boolean)
     .join("");
+  const prompt = f.prompt
+    ? `<details class="fix-prompt"><summary>CRACI's fix prompt for this job, as copied from the job page</summary><pre>${esc(f.prompt)}</pre></details>`
+    : "";
   const by = f.agent ? `Written by ${esc(f.agent.model)} in ${f.agent.seconds} s${f.craciPrompt ? ", from CRACI's fix prompt for the job" : ""}.` : "";
   return `<article class="fix">
     <header>
@@ -58,7 +61,7 @@ function fixHtml(f: FixRow, { esc, ext, ago }: Helpers): string {
       <p class="meta">${esc(f.repo)} · ${esc(ago(f.createdAt))} · ${by} ${esc(twins)}</p>
     </header>
     <div class="fix-body">
-      <div>${f.advisories.length ? `<ul class="rows fix-adv">${advisories}</ul>` : ""}${change}${f.why.length && f.status !== "partly-proven" ? `<ul class="fix-why">${f.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</div>
+      <div>${f.advisories.length ? `<ul class="rows fix-adv">${advisories}</ul>` : ""}${change}${f.why.length && f.status !== "partly-proven" ? `<ul class="fix-why">${f.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}${prompt}</div>
       <div>${counts}<p class="links">${links}</p></div>
     </div>
   </article>`;

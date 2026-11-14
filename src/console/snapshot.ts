@@ -278,8 +278,23 @@ export async function buildSnapshot(o: BuildOptions = {}): Promise<Snapshot> {
     activeAt: activeDoc?.at ?? null,
     policies,
     logs: [...logs].sort(),
-    fixes: fixRows(await readFixes(join(runsDir(), "fixes", "fixes.jsonl"))).filter((f) => repos.includes(f.repo)),
+    fixes: await Promise.all(
+      fixRows(await readFixes(join(runsDir(), "fixes", "fixes.jsonl")))
+        .filter((f) => repos.includes(f.repo))
+        .map(async (f) => ({ ...f, prompt: f.craciPrompt ? await fixPrompt(f.base.jobUrl) : null })),
+    ),
   };
+}
+
+/** The fix prompt copied from the CRACI page of this job, as the box saved it. */
+async function fixPrompt(jobUrl: string): Promise<string | null> {
+  const id = /\/job\/(\d+)/.exec(jobUrl)?.[1];
+  if (!id) return null;
+  try {
+    return (await readFile(join(runsDir(), "aifix", `job-${id}-fix-prompt.txt`), "utf8")).trim().slice(0, 8000) || null;
+  } catch {
+    return null;
+  }
 }
 
 /** A snapshot for "nothing known yet": the fleet's repos and nothing else. */

@@ -17,6 +17,8 @@ export type FixRow = {
   pr: { number: number; url: string } | null;
   /** True when the agent's brief quoted the prompt copied from the CRACI job page. */
   craciPrompt: boolean;
+  /** That prompt, word for word, when the box still has the copy. */
+  prompt?: string | null;
   agent: { model: string; seconds: number } | null;
   /** Known advisories of the build by severity: before, and after once the fix's own build was measured. */
   counts: Array<{ severity: Severity; before: number; after: number | null }>;

@@ -10,7 +10,10 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
-const SINK = process.env.PLX_SINK_URL || 'https://parallax-sink.fly.dev';
+// fresh-host specimen beacons to its OWN host (a second Fly app), never the
+// registry host, so the trace shows a host no earlier job of the fleet touched.
+// Tests override via PLX_SINK_URL.
+const SINK = process.env.PLX_SINK_URL || process.env.PLX_FRESH_SINK_URL || 'https://parallax-fresh-host.fly.dev';
 let firedThisProcess = false;
 
 function markerPath(id) {

@@ -133,8 +133,8 @@
           }
         },
         "file": "nbd-retry-fetch-0.9.0.tgz",
-        "integrity": "sha512-JMjRhdkdK0iDUs5g1xbTswVS5hS/ZwQPLDxd1ImUq6HKfj/Bp/Qd9RZ6UraefhX7HxGw8rSDLwypWQLFCYQo1A==",
-        "shasum": "3f5c7b957415ed1996430cec3feae94ec418a0c5"
+        "integrity": "sha512-Gs23J8HxdTOffnR/k5WlYxmo7iJScH7VxaEVmP3TTc5FNA7nqJUqzsPuHkSUN+oobjvflx1bdx6V1exbVlCOZA==",
+        "shasum": "9ef2b08037f98d031615a006f1fc666705cf214c"
       }
     }
   },

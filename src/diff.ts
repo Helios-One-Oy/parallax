@@ -7,6 +7,7 @@ import type { CdxComponent, CycloneDxBom, Divergence, JobRef, NetworkTrace, Verd
 
 export const FLAP_RULE = "flaps-in-history";
 export const EARLY_RULE = "decoy-stopped-early";
+export const BEFORE_DRESS_RULE = "before-the-twins-differed";
 const DECOY_PHRASE = "the decoy twin, which carries fake publish tokens,";
 
 export type TwinInput = {
@@ -17,6 +18,8 @@ export type TwinInput = {
   conclusion?: string | null;
   /** false = the job stopped before any build step ran. */
   reachedBuild?: boolean;
+  /** When this twin's dress step started (GitHub step time). Until then both twins are identical. */
+  dressedAt?: string | null;
   /** Used when the trace (and so its job metadata) is missing. */
   meta?: { repo?: string; runId?: string; commitSha?: string; branch?: string };
 };
@@ -101,10 +104,25 @@ export function diffTwinsDetailed(bare: TwinInput, decoy: TwinInput, history: Hi
   const novel = (kind: "host" | "purl", value: string): boolean =>
     !!history.fleet && !!value && !history.fleet.seenBefore(kind, value, { before, excludeRunId: runId || undefined });
 
+  // Runner plumbing that one twin happened to do before it was dressed (connectivity checks at job start).
+  const beforeDress = (twin: TwinInput, list: NormObs[]): boolean => {
+    const t = twin.dressedAt ? Date.parse(twin.dressedAt) : NaN;
+    if (!Number.isFinite(t)) return false;
+    return list.every((n) => {
+      const at = Date.parse((n.raw as { observedAt?: string }).observedAt ?? "");
+      return Number.isFinite(at) && at < t;
+    });
+  };
+  const BEFORE_DRESS_REASON = "happened before the twins were dressed differently, so the fake credentials cannot have caused it";
+
   if (!inconclusive) {
     for (const [key, list] of nb.keys) {
       if (nd.keys.has(key)) {
         shared.push(key);
+        continue;
+      }
+      if (beforeDress(bare, list)) {
+        ignored.push({ key, rule: BEFORE_DRESS_RULE, reason: BEFORE_DRESS_REASON, side: "bare" });
         continue;
       }
       // Bare did it, decoy did not. It flaps if earlier bare runs sometimes did it and sometimes not.
@@ -121,6 +139,10 @@ export function diffTwinsDetailed(bare: TwinInput, decoy: TwinInput, history: Hi
     }
     for (const [key, list] of nd.keys) {
       if (nb.keys.has(key)) continue;
+      if (beforeDress(decoy, list)) {
+        ignored.push({ key, rule: BEFORE_DRESS_RULE, reason: BEFORE_DRESS_REASON, side: "decoy" });
+        continue;
+      }
       // Decoy did it, this bare run did not. If an earlier bare run did it too, the bare twin is known to do it sometimes.
       const n = seenIn(key);
       if (n > 0) {

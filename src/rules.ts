@@ -39,6 +39,8 @@ export const HOST_RULES: HostRule[] = [
   // Only GitHub's own result/cache storage accounts are folded together; any other storage account keeps its name.
   { name: "gha-results-storage", match: /^productionresultssa\d+\.blob\.core\.windows\.net$/, to: "productionresultssa*.blob.core.windows.net" },
   { name: "gha-pipelines-shard", match: /^pipelines[a-z0-9-]*\.actions\.githubusercontent\.com$/, to: "pipelines*.actions.githubusercontent.com" },
+  // Seen in the first real fleet runs: run-actions-1-azure-eastus, run-actions-2-azure-eastus, ...
+  { name: "gha-run-shard", match: /^run-actions-\d+-[a-z0-9-]+\.actions\.githubusercontent\.com$/, to: "run-actions-*.actions.githubusercontent.com" },
   { name: "gha-vstoken-shard", match: /^vstoken[a-z0-9-]*\.actions\.githubusercontent\.com$/, to: "vstoken*.actions.githubusercontent.com" },
   { name: "s3-regional", match: /^([a-z0-9.-]+)\.s3[.-][a-z0-9-]+\.amazonaws\.com$/, to: "$1.s3.amazonaws.com" },
   { name: "cloudfront-node", match: /^d[a-z0-9]{12,14}\.cloudfront\.net$/, to: "*.cloudfront.net" },
@@ -176,6 +178,10 @@ export const BUILD_STEP_PATTERN = /\b(build|install|test|compile|lint|npm|pnpm|y
 
 // The verdict looks for these two jobs in a run.
 export const TWIN_JOB_PATTERNS = { bare: /\(bare\)\s*$/, decoy: /\(decoy\)\s*$/ };
+
+// The step that dresses a twin. Until it starts, the two twins are the same code with the same inputs,
+// so a difference seen earlier cannot have been caused by the decoy credentials (diff.BEFORE_DRESS_RULE).
+export const DRESS_STEP_PATTERN = /(^|[\s/])dress(\s|@|$)/i;
 
 // Steps that are never "the build": runner bookkeeping and `uses:` steps (default name "Run owner/repo@ref").
 export const SETUP_STEP_PATTERN = /^(Set up job|Complete job|Post |Pre |Run [\w.-]+\/[\w./-]+@|Initialize containers|Stop containers)/;

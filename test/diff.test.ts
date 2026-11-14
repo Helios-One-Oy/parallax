@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { diffTwins, diffTwinsDetailed, FLAP_RULE, policySuggestion, type TwinInput } from "../src/diff.ts";
+import { BEFORE_DRESS_RULE, diffTwins, diffTwinsDetailed, FLAP_RULE, policySuggestion, type TwinInput } from "../src/diff.ts";
 import { normalizeTrace } from "../src/normalize.ts";
-import { reachedBuild, renderMarkdown } from "../src/cli.ts";
+import { dressedAt, reachedBuild, renderMarkdown } from "../src/cli.ts";
 import { dnsObs, httpObs, jobRef, npmBuild, sbom, tcpObs, trace } from "./factories.ts";
 
 const PURLS = ["pkg:npm/left-pad@1.3.0", "pkg:npm/%40types/node@22.9.0"];
@@ -19,6 +19,28 @@ const decoyTwin = (obs = npmBuild(), purls = PURLS): TwinInput => ({
 });
 
 describe("diffTwins", () => {
+  test("what one twin did before it was dressed is not counted, what it did after is", () => {
+    // Seen in the first real fleet run: the runner checked GitHub's /_dns endpoints in one twin only, at job start.
+    // The factory stamps observation i at 10:00:00 + i * 250 ms; the dress step started one second in.
+    const dressed = "2026-11-14T10:00:01Z";
+    const base = npmBuild();
+    const check = httpObs("https://api.github.com/_dns");
+    const later = httpObs("https://plx-sink.test/collect", { method: "POST" });
+    const earlyObs = [check, ...base]; // the check is observation 0, before the dress step
+    const early = diffTwinsDetailed({ ...bareTwin(), dressedAt: dressed }, { ...decoyTwin(earlyObs), dressedAt: dressed });
+    expect(early.verdict.status).toBe("clean");
+    expect(early.verdict.ignored.rules).toContain(BEFORE_DRESS_RULE);
+    const both = diffTwins({ ...bareTwin(), dressedAt: dressed }, { ...decoyTwin([...earlyObs, later]), dressedAt: dressed });
+    expect(both.status).toBe("divergent");
+    expect(both.divergences.map((d) => d.key)).toEqual(["http POST plx-sink.test/collect"]);
+    // No dress step known: nothing is excused.
+    expect(diffTwins(bareTwin(), decoyTwin(earlyObs)).status).toBe("divergent");
+    const step = (name: string, started_at: string) => ({ name, status: "completed", conclusion: "success", number: 1, started_at });
+    expect(dressedAt({ steps: [step("Set up job", "2026-11-14T16:59:13Z"), step("Dress this twin", dressed)] })).toBe(dressed);
+    expect(dressedAt({ steps: [step("Run Helios-One-Oy/parallax/dress@main", dressed)] })).toBe(dressed);
+    expect(dressedAt({ steps: [step("Run actions/checkout@v4", dressed)] })).toBeNull();
+  });
+
   test("identical twins are clean", () => {
     const v = diffTwins(bareTwin(), decoyTwin());
     expect(v.status).toBe("clean");

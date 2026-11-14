@@ -8,7 +8,7 @@ import { buildFleetJob, FleetIndex, loadFleetRepos, syncFleet } from "./fleet.ts
 import { GithubClient, type GhJob, type GhRun } from "./github.ts";
 import { buildGraph, cacheLineageAlerts, foreignImagePulls, ringFence, rings } from "./graph.ts";
 import { assertRepo, verdictsDir } from "./paths.ts";
-import { BUILD_STEP_PATTERN, SETUP_STEP_PATTERN, TWIN_JOB_PATTERNS } from "./rules.ts";
+import { BUILD_STEP_PATTERN, DRESS_STEP_PATTERN, SETUP_STEP_PATTERN, TWIN_JOB_PATTERNS } from "./rules.ts";
 import type { JobRef, Verdict } from "./types.ts";
 
 type Args = { _: string[]; [k: string]: string | boolean | string[] };
@@ -38,6 +38,11 @@ export function reachedBuild(job: Pick<GhJob, "conclusion" | "steps">): boolean 
   return job.steps.some(
     (s) => !SETUP_STEP_PATTERN.test(s.name) && BUILD_STEP_PATTERN.test(s.name) && (s.conclusion === "success" || s.conclusion === "failure"),
   );
+}
+
+/** Start of the step that dresses the twin, or null when the job has no such step. */
+export function dressedAt(job: Pick<GhJob, "steps">): string | null {
+  return job.steps?.find((s) => DRESS_STEP_PATTERN.test(s.name))?.started_at ?? null;
 }
 
 const jobRef = (j: GhJob | undefined, fallbackName: string): JobRef =>
@@ -121,7 +126,7 @@ async function cmdVerdict(a: Args): Promise<number> {
     if (!j || j.status !== "completed") return { job: jobRef(j, name), trace: null, sbom: null, meta };
     const trace = await craci.getNetworkTrace(repo, String(j.id), { waitFor: waitTraceMs });
     const sbom = await craci.getSbom(repo, String(j.id), { waitFor: trace ? Math.min(waitTraceMs, 60_000) : 0 });
-    return { job: jobRef(j, name), trace, sbom, conclusion: j.conclusion, reachedBuild: reachedBuild(j), meta };
+    return { job: jobRef(j, name), trace, sbom, conclusion: j.conclusion, reachedBuild: reachedBuild(j), dressedAt: dressedAt(j), meta };
   };
   const [tb, td] = await Promise.all([fetchTwin(bare, "build (bare)"), fetchTwin(decoy, "build (decoy)")]);
 

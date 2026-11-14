@@ -2,7 +2,7 @@
 import { detectContext, detectRun, judge, type DetectContext, type RunDetection } from "../detect.ts";
 import { FleetIndex, type FleetJob } from "../fleet.ts";
 import { buildGraph, cacheLineageAlerts, cacheNodeId, foreignImagePulls, ringFence, rings, type FenceResult, type Graph, type RingMember } from "../graph.ts";
-import { MIN_EGRESS_RUNS, TWIN_JOB_PATTERNS } from "../rules.ts";
+import { MIN_EGRESS_RUNS, MUTABLE_URL_RULES, SOURCE_HOSTS, TWIN_JOB_PATTERNS, UNTRUSTED_EVENTS } from "../rules.ts";
 import type { Check, Divergence, Finding, JobSummary, Organ, Verdict } from "../types.ts";
 import { runKey, type GhJobLite, type Snapshot, type TwinConn, type TwinDetail } from "./snapshot.ts";
 
@@ -388,12 +388,39 @@ function gateOf(run: RunRow, v: Verdict | null, jobs: GhJobLite[], fromGithub: b
   return { job, state: "ran", sentence: ran + ended };
 }
 
+const mergedBytes = new WeakMap<Snapshot, Set<string>>();
+
+/**
+ * Downloads of a caught pull request whose exact bytes no job of merged code ever fetched: the package it
+ * brought in. Both twins fetch it, so the twin diff does not name it; CRACI's body hashes do.
+ */
+function ownDownloads(s: Snapshot, v: Verdict): Seed[] {
+  const { index } = coreOf(s);
+  let merged = mergedBytes.get(s);
+  if (!merged) {
+    merged = new Set();
+    for (const j of s.jobs) if (!UNTRUSTED_EVENTS.includes(j.event)) for (const [url, sha] of j.urlHashes) merged.add(`${url}@${sha}`);
+    mergedBytes.set(s, merged);
+  }
+  const out: Seed[] = [];
+  for (const id of [v.twins.decoy.jobId, v.twins.bare.jobId]) {
+    const j = index.getJob(v.repo, id);
+    if (!j || !UNTRUSTED_EVENTS.includes(j.event)) continue;
+    for (const [url, sha] of j.urlHashes) {
+      if (merged.has(`${url}@${sha}`) || MUTABLE_URL_RULES.some((r) => r.match.test(url)) || out.some((x) => x.seed === `sha256:${sha}`)) continue;
+      out.push({ seed: `sha256:${sha}`, label: `bytes of ${url}`, kind: "bytes" });
+    }
+  }
+  return out.slice(0, 4);
+}
+
 export function seedsOf(s: Snapshot, only?: Verdict | null): Seed[] {
   const out = new Map<string, Seed>();
   const add = (x: Seed) => {
     if (!out.has(x.seed)) out.set(x.seed, x);
   };
   for (const v of only ? [only] : s.verdicts) {
+    if (v.status === "divergent" || detectionOf(s, v.repo, v.runId).findings.some((f) => f.fails)) for (const x of ownDownloads(s, v)) add(x);
     for (const d of v.divergences) {
       if (d.kind === "package") add({ seed: d.key, label: d.key, kind: "package" });
       else {
@@ -509,7 +536,11 @@ export async function ringsView(s: Snapshot, rawSeed: string): Promise<RingsView
     seed,
     seedKind: seed.startsWith("cache:") ? "cache" : r.seedKind,
     resolved: res.resolved,
-    note: res.note,
+    note:
+      res.note ??
+      (r.seedKind === "host" && SOURCE_HOSTS.some((h) => h.host.test(seed.toLowerCase()))
+        ? `${seed} also serves this fleet's own packages, so every build contacts it. To follow one bad package, start from its bytes instead.`
+        : null),
     rings: r.rings.map((ring) => ring.map(withRun)),
     r0: r.r0,
     fence,

@@ -8,37 +8,32 @@
 
 **Source:** https://github.com/Helios-One-Oy/parallax
 
+**Film:** https://youtu.be/T3MuWHmWIh0
+
 ## Description
 
-Some malicious packages only act where there is something to steal. They look for a publish token or a release tag first, and in a plain test build they do nothing, so a scan of that build sees nothing.
+The demo needs no login. Start on Replays, every row links to the real run.
 
-Parallax runs every build twice on CRACI, side by side. One twin is plain. The other is dressed as a release: a step puts a release tag in its environment and writes npm and AWS keys where malware looks for them (the environment and two key files, .npmrc and ~/.aws). The keys are random but built like real ones, down to the checksum inside an npm token. Honest code does nearly the same thing in both twins. Code that looks for keys does not.
+Some malware only acts when there is something to steal. It looks for an npm token or a release tag first. A test build has neither, so it does nothing there and a scan comes back clean.
 
-CRACI records every connection and every package of both. We compare the two traces and the two SBOMs, and if the dressed twin did something the plain one did not, the verdict job fails and shows the exact request. The release job needs the verdict, so it never starts. The real release keys never enter either twin. A payload that goes online to test the key gives itself away with that one call.
+Parallax runs every build twice on CRACI. The bare twin is the plain build. The decoy twin looks like a release and carries a fake npm token and fake AWS keys. CRACI records every connection and every package of both. If one twin does something the other doesn't, the release never starts.
 
-We tried it on two harmless packages of our own that hide this way. One fires only when it finds an npm token, which is what the Shai-Hulud worm needed to spread. The other fires only on a release tag. Both were stopped, 53 and 51 seconds after the push.
+We made two harmless packages that hide like this. One waits for an npm token, which is what the Shai-Hulud worm needed to spread. The other waits for a release tag. Both were stopped, 53 and 51 seconds after the push.
 
-Honest builds differ a little too. So we ignore any URL that clean builds call only now and then. Of the first 55 twin builds 50 came out clean and 4 were the two hiding packages, each pushed twice. One was a false alarm: the runner itself called GitHub in only one twin before the build began. Since then we ignore everything before the dress step. The second twin doubles the build. In our demo repos that is 13 to 36 seconds of runner time per push.
-
-Most attacks don't bother to hide, and for those we use what else CRACI knows about a build. We replayed seven as harmless copies in our demo repos. Five were caught, three of them in time to stop their own release. A sixth got through, but after it deleted its own run CRACI still had the record. The seventh got past us: a time bomb, a package that does nothing until a set date.
-
-- axios: both twins called a host that none of the repo's 11 earlier runs had called.
-- TanStack: the build on main restored a cache that a pull request job had written. CRACI's cache provenance names the writer.
-- tj-actions: the same URL answered with different content than last time. CRACI's trace carries a hash of the response.
-- KICS: the tag of our own base image moved to a digest that none of our jobs built. CRACI's image provenance has no record of it.
-- A package name that does not exist, the kind coding assistants invent: the install asked the registry for it. Whoever registers it next decides what that build installs.
-- A workflow that posts to a hard-coded IP address and is then deleted from GitHub: CRACI still holds its 14 connections and its log, with the address in it.
-
-For each catch you can ask where else it went: every other job that used the same package, host, cache or content.
-
-The same distrust goes for fixes. CRACI's AI fix prompt asks for an audit and leaves the change to you. We copy it from the job page and hand it to an agent that does both. We don't trust the agent either: a bot that bumps dependencies is a fast way to install a hijacked release. Its pull request goes through the twins like any other, and the SBOM of that build decides what is really fixed. On the first real run 4 of the 5 critical and high vulnerabilities were gone, and the total went from 32 to 12.
-
-The demo needs no login. Open the Replays page first: every row links to the real run.
+Most attacks don't hide, so we replayed seven more as harmless copies. Five of the nine were stopped before the release job started and two were seen but not stopped. In one, the run is deleted from GitHub afterwards to hide it, and CRACI still had its 14 connections and the log. A time bomb that waits for a date got past us.
 
 ## How we used CRACI
 
-Every build job in the demo repos and in Parallax itself runs on `runs-on: craci`. We read `/network-trace`, `/sbom`, `/artifact-provenance` and `/job-logs`, and the fix agent starts from CRACI's AI fix prompt. Adding Parallax to a repo is about 20 lines of workflow: the dress step in the build job, and the verdict job after it. The API does not answer calls from inside a CRACI runner, so that one small verdict job runs on a GitHub runner.
+- We diff the `/network-trace` of the two twins. Compared with earlier runs it also caught a new dependency calling a host that 11 runs had never called.
+- The trace keeps a hash of every response, so we saw one URL start serving new content.
+- `/artifact-provenance` names the job that wrote a cache or an image. A pull request job had written the cache that main restored, and 16 jobs had restored it.
+- `/sbom` listed 5 critical and high vulnerabilities in our demo repo. An agent wrote the fix from CRACI's AI fix prompt, its pull request went through the twins too, and the next SBOM had 1 left.
+- `/job-logs` is where the deleted run's log came from.
+
+Every build job in our 4 repos runs on CRACI, 160 traced so far. The first 59 twin builds gave one false alarm. The runner looked up GitHub in one twin before the build began, and we now ignore anything before the twins are set up.
+
+Adding it to a repo is two actions and a prefix on the build commands. One action sets up the twins and one compares them. The twins run side by side and the verdict takes about 30 seconds.
 
 ## Technologies
 
-CRACI runners and API, GitHub Actions, Bun, TypeScript, Python, Fly.io, Claude Fable 5.2 for the fix agent.
+CRACI runners and API, GitHub Actions, Bun, TypeScript, Fly.io, Claude Fable 5.2 for the fix agent.
